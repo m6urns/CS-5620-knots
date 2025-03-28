@@ -7,8 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Dict, List
-from imi_wrapper import ImiCamera, StreamType
-from imi_visualization import FrameVisualizer, VisualizationConfig, ColorMap
+
+from generic_camera import GenericCamera, Frame
+from visualization import FrameVisualizer, VisualizationConfig
 
 @dataclass
 class KnotSample:
@@ -16,38 +17,35 @@ class KnotSample:
     stage: str  # loose, loop, complete, tightened
     capture_timestamp: str
     notes: Optional[str] = None
-    rgb_only: bool = False  # Flag to mark RGB-only samples
 
 class OverhandKnotCollector:
-    """Tool for collecting overhand knot RGB-D data"""
+    """Tool for collecting overhand knot RGB data"""
     
     STAGES = ["loose", "loop", "complete", "tightened"]
     
-    def __init__(self, color_index: int = 4, base_path: str = "overhand_knot_dataset", rgb_only: bool = False):
+    def __init__(self, camera_index: int = 0, base_path: str = "overhand_knot_dataset", 
+                 resolution: tuple = (640, 480), fps: int = 30):
         """Initialize data collector
         
         Args:
-            color_index: Index of the color camera to use
+            camera_index: Index of the camera to use
             base_path: Base directory for dataset storage
-            rgb_only: Use RGB-only mode (no depth data)
+            resolution: Camera resolution as (width, height)
+            fps: Camera frames per second
         """
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
         
-        self.color_index = color_index
-        self.rgb_only = rgb_only
+        self.camera_index = camera_index
+        self.resolution = resolution
+        self.fps = fps
         
-        # Setup visualization with info overlay for display only
+        # Setup visualization with info overlay
         self.viz_config = VisualizationConfig(
-            min_depth=100,
-            max_depth=1000,
-            auto_range=True,
-            colormap=ColorMap.TURBO,
-            show_histogram=True,
-            show_info=False,  # Don't show info overlay in saved images
-            view_mode="side-by-side" if not rgb_only else "color-only",
-            window_width=800,
-            window_height=600
+            window_name="Knot Data Collection",
+            window_width=self.resolution[0],
+            window_height=self.resolution[1],
+            show_info=True
         )
         self.viz = FrameVisualizer(self.viz_config)
         
@@ -71,58 +69,32 @@ class OverhandKnotCollector:
         with open(self.counts_path, 'w') as f:
             json.dump(self.sample_counts, f, indent=2)
             
-    def _save_sample(self, rgb_frame, depth_frame=None, sample: KnotSample = None):
-        """Save a synchronized RGB-D sample with metadata
+    def _save_sample(self, frame: Frame, sample: KnotSample) -> Path:
+        """Save a frame sample with metadata
         
-        In RGB-only mode, depth_frame may be None
+        Args:
+            frame: Frame to save
+            sample: Sample metadata
+            
+        Returns:
+            Path to the saved sample directory
         """
         # Create sample directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         sample_dir = self.base_path / sample.stage / timestamp
         sample_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save raw RGB frame without overlays
-        cv2.imwrite(str(sample_dir / "rgb.png"), rgb_frame.data)
-        
-        # Update sample metadata with RGB-only flag
-        sample.rgb_only = self.rgb_only
-        
-        # Save depth data if available (not in RGB-only mode)
-        if not self.rgb_only and depth_frame is not None:
-            np.save(str(sample_dir / "depth.npy"), depth_frame.data)
-            
-            # Create clean depth visualization without overlays
-            depth_colormap, _ = self.viz.visualize_depth(depth_frame.data)
-            if depth_colormap is not None:
-                # Save clean depth visualization
-                cv2.imwrite(str(sample_dir / "depth_viz.png"), depth_colormap)
-                
-                # Resize images to match before combining
-                rgb_height, rgb_width = rgb_frame.data.shape[:2]
-                depth_height, depth_width = depth_colormap.shape[:2]
-                
-                # Create clean combined visualization
-                depth_viz_resized = cv2.resize(depth_colormap, 
-                                             (int(depth_width * rgb_height / depth_height), rgb_height))
-                combined = np.hstack((rgb_frame.data, depth_viz_resized))
-                cv2.imwrite(str(sample_dir / "combined.png"), combined)
+        # Save RGB frame without overlays
+        cv2.imwrite(str(sample_dir / "rgb.png"), frame.data)
         
         # Save metadata
         metadata_dict = {
             "stage": sample.stage,
             "capture_timestamp": sample.capture_timestamp,
             "notes": sample.notes,
-            "rgb_only": sample.rgb_only,
-            "rgb_frame_number": rgb_frame.frame_number,
+            "frame_number": frame.frame_number,
+            "resolution": f"{frame.width}x{frame.height}"
         }
-        
-        # Add depth info if available
-        if not self.rgb_only and depth_frame is not None:
-            metadata_dict.update({
-                "depth_frame_number": depth_frame.frame_number,
-                "rgb_timestamp": rgb_frame.timestamp,
-                "depth_timestamp": depth_frame.timestamp
-            })
         
         with open(sample_dir / "metadata.json", 'w') as f:
             json.dump(metadata_dict, f, indent=2)
@@ -137,19 +109,17 @@ class OverhandKnotCollector:
         """Start interactive data collection session"""
         try:
             print("\nInitializing camera...")
-            self.camera = ImiCamera(color_index=self.color_index)
-            self.camera.initialize()
+            self.camera = GenericCamera(
+                camera_index=self.camera_index,
+                resolution=self.resolution,
+                fps=self.fps
+            )
             
-            # Open color stream
-            self.camera.open_stream(StreamType.COLOR)
-            print(f"Color stream opened successfully (using index {self.color_index})")
+            if not self.camera.initialize():
+                print("Failed to initialize camera. Exiting.")
+                return
             
-            # Open depth stream if not in RGB-only mode
-            if not self.rgb_only:
-                self.camera.open_stream(StreamType.DEPTH)
-                print("Depth stream opened successfully")
-            else:
-                print("Running in RGB-only mode (no depth data)")
+            print(f"Camera initialized successfully (using index {self.camera_index})")
             
             print("\nOverhand Knot Data Collection")
             print("============================")
@@ -161,37 +131,28 @@ class OverhandKnotCollector:
             print("  'space': Capture sample")
             print("  's': Cycle knot stage")
             print("  'n': Add note to next capture")
-            if not self.rgb_only:
-                print("  'v': Toggle view mode")
-                print("  'r': Toggle auto-range")
             print("  'q': Quit")
             
             note_for_next = None
             
             while True:
-                # Get color frame
-                color_frame = self.camera.get_frame(StreamType.COLOR)
+                # Get frame from camera
+                frame = self.camera.get_frame()
                 
-                # Get depth frame if not in RGB-only mode
-                depth_frame = None
-                if not self.rgb_only:
-                    depth_frame = self.camera.get_frame(StreamType.DEPTH)
-                
-                if color_frame is not None and (self.rgb_only or depth_frame is not None):
-                    # Show frames and current stage
-                    color_viz = color_frame.data.copy()
+                if frame is not None:
+                    # Show frame with current stage overlay
+                    display_frame = frame.data.copy()
                     
                     # Add stage overlay
-                    cv2.putText(color_viz, f"Stage: {self.current_stage}", 
+                    cv2.putText(display_frame, f"Stage: {self.current_stage}", 
                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                               (0, 255, 0), 2)
-                    cv2.putText(color_viz, f"Samples: {self.sample_counts[self.current_stage]}", 
+                    cv2.putText(display_frame, f"Samples: {self.sample_counts[self.current_stage]}", 
                               (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                               (0, 255, 0), 2)
                     
-                    # Add mode indicator
-                    if self.rgb_only:
-                        cv2.putText(color_viz, "Mode: RGB-only", 
+                    if note_for_next:
+                        cv2.putText(display_frame, f"Note: {note_for_next}", 
                                   (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                                   (0, 165, 255), 2)
                               
@@ -201,34 +162,21 @@ class OverhandKnotCollector:
                         "SPACE: Capture sample",
                         "S: Cycle stage",
                         "N: Add note",
+                        "Q: Quit"
                     ]
-                    
-                    if not self.rgb_only:
-                        controls.extend([
-                            "V: Toggle view",
-                            "R: Auto-range",
-                        ])
-                        
-                    controls.append("Q: Quit")
                     
                     y_pos = 120
                     for control in controls:
-                        cv2.putText(color_viz, control,
+                        cv2.putText(display_frame, control,
                                   (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                                  (255, 255, 255), 2)  # White with black outline
-                        cv2.putText(color_viz, control,
+                                  (255, 255, 255), 2)  # White with outline
+                        cv2.putText(display_frame, control,
                                   (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                                   (0, 0, 0), 1)
                         y_pos += 25
                     
-                    # Show frames
-                    if self.rgb_only:
-                        # In RGB-only mode, we only show the color frame
-                        key = self.viz.show_rgb_only(color_viz)
-                    else:
-                        # In dual-stream mode, we show both color and depth
-                        depth_viz = depth_frame.data.copy()
-                        key = self.viz.show(depth_viz, color_viz)
+                    # Show frame
+                    key = self.viz.show(display_frame)
                     
                     if key == ord('q'):
                         break
@@ -236,11 +184,10 @@ class OverhandKnotCollector:
                         sample = KnotSample(
                             stage=self.current_stage,
                             capture_timestamp=datetime.now().isoformat(),
-                            notes=note_for_next,
-                            rgb_only=self.rgb_only
+                            notes=note_for_next
                         )
                         
-                        sample_dir = self._save_sample(color_frame, depth_frame, sample)
+                        sample_dir = self._save_sample(frame, sample)
                         print(f"\nSaved {self.current_stage} sample to {sample_dir}")
                         print(f"Total {self.current_stage} samples: {self.sample_counts[self.current_stage]}")
                         note_for_next = None
@@ -256,17 +203,13 @@ class OverhandKnotCollector:
                         note = input("\nEnter note for next capture: ")
                         note_for_next = note if note.strip() else None
                         
-                    elif not self.rgb_only and key == ord('v'):
-                        # Cycle view mode (not available in RGB-only mode)
-                        modes = ["side-by-side", "overlay"]
-                        current_idx = modes.index(self.viz_config.view_mode) if self.viz_config.view_mode in modes else 0
-                        self.viz_config.view_mode = modes[(current_idx + 1) % len(modes)]
-                        print(f"\nView mode: {self.viz_config.view_mode}")
-                        
-                    elif not self.rgb_only and key == ord('r'):
-                        # Toggle auto-range (not available in RGB-only mode)
-                        self.viz_config.auto_range = not self.viz_config.auto_range
-                        print(f"\nAuto-range: {self.viz_config.auto_range}")
+                else:
+                    # No frame available, just check for key press
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+                    
+                    # Small delay to avoid busy waiting
+                    time.sleep(0.01)
                         
         finally:
             if self.camera:
@@ -277,14 +220,25 @@ class OverhandKnotCollector:
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description='Collect overhand knot RGB-D data')
-    parser.add_argument('--color-index', type=int, default=4,
-                       help='Index of the color camera to use (default: 4)')
-    parser.add_argument('--rgb-only', action='store_true',
-                       help='Use RGB-only mode (no depth data)')
+    parser = argparse.ArgumentParser(description='Collect overhand knot RGB data')
+    parser.add_argument('--camera-index', type=int, default=0,
+                       help='Index of the camera to use (default: 0)')
+    parser.add_argument('--width', type=int, default=640,
+                       help='Camera width resolution (default: 640)')
+    parser.add_argument('--height', type=int, default=480,
+                       help='Camera height resolution (default: 480)')
+    parser.add_argument('--fps', type=int, default=30,
+                       help='Camera frames per second (default: 30)')
+    parser.add_argument('--dataset-path', type=str, default="overhand_knot_dataset",
+                       help='Path to dataset directory (default: overhand_knot_dataset)')
     args = parser.parse_args()
     
-    collector = OverhandKnotCollector(color_index=args.color_index, rgb_only=args.rgb_only)
+    collector = OverhandKnotCollector(
+        camera_index=args.camera_index,
+        base_path=args.dataset_path,
+        resolution=(args.width, args.height),
+        fps=args.fps
+    )
     collector.start_collection()
 
 if __name__ == "__main__":

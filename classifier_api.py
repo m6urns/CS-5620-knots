@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse, JSONResponse
 import uvicorn
 import cv2
@@ -16,9 +16,9 @@ from typing import Optional, Dict
 from pydantic import BaseModel, Field
 from pathlib import Path
 
-from knot_classifier import DualStreamKnotClassifier
-from imi_wrapper import ImiCamera, StreamType
-from imi_visualization import FrameVisualizer, VisualizationConfig, ColorMap
+from knot_classifier import KnotClassifier
+from generic_camera import GenericCamera
+from visualization import VisualizationConfig
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -26,17 +26,26 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseModel):
     """API settings model with explicit parameter names and descriptions"""
-    # Camera and hardware settings
+    # Camera settings
     camera_index: int = Field(
-        default=4,
-        description="Index of the color camera to use",
+        default=0,
+        description="Index of the camera to use",
         ge=0
     )
-    
-    # RGB-only mode
-    rgb_only: bool = Field(
-        default=False,
-        description="Use RGB-only mode (no depth data)"
+    width: int = Field(
+        default=640,
+        description="Camera resolution width",
+        ge=320
+    )
+    height: int = Field(
+        default=480,
+        description="Camera resolution height",
+        ge=240
+    )
+    fps: int = Field(
+        default=30,
+        description="Camera frames per second",
+        ge=10
     )
     
     # Model settings
@@ -49,40 +58,6 @@ class Settings(BaseModel):
         description="Minimum confidence threshold for classifications",
         ge=0.0,
         le=1.0
-    )
-    
-    # Visualization settings
-    view_mode: str = Field(
-        default="side-by-side",
-        description="Visualization mode ('side-by-side' or 'overlay')"
-    )
-    auto_range: bool = Field(
-        default=True,
-        description="Automatically adjust depth range"
-    )
-    min_depth: int = Field(
-        default=100,
-        description="Minimum depth value in mm",
-        ge=0
-    )
-    max_depth: int = Field(
-        default=1000,
-        description="Maximum depth value in mm",
-        ge=0
-    )
-    
-    # Image alignment settings (only used in RGB-D mode)
-    vertical_shift: int = Field(
-        default=71,
-        description="Vertical shift for depth-color alignment in pixels"
-    )
-    horizontal_shift: int = Field(
-        default=45,
-        description="Horizontal shift for depth-color alignment in pixels"
-    )
-    alignment_mode: bool = Field(
-        default=False,
-        description="Enable alignment adjustment mode"
     )
     
     # Server settings
@@ -115,19 +90,6 @@ class KnotClassifierAPI:
         self.is_running = False
         self.frame_queue = queue.Queue(maxsize=2)
         
-        # Initialize visualization config
-        self.viz_config = VisualizationConfig(
-            min_depth=self.settings.min_depth,
-            max_depth=self.settings.max_depth,
-            auto_range=self.settings.auto_range,
-            colormap=ColorMap.TURBO,
-            show_histogram=False,
-            show_info=False,
-            view_mode=self.settings.view_mode,
-            window_width=800,
-            window_height=600
-        )
-        
         # Initialize transforms
         self.rgb_transform = transforms.Compose([
             transforms.ToPILImage(),
@@ -136,14 +98,6 @@ class KnotClassifierAPI:
             transforms.Normalize(mean=[0.485, 0.456, 0.406], 
                               std=[0.229, 0.224, 0.225])
         ])
-        
-        if not self.settings.rgb_only:
-            self.depth_transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485], std=[0.229])
-            ])
         
         # Initialize classifier
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -154,8 +108,8 @@ class KnotClassifierAPI:
             if not weights_path.exists():
                 raise FileNotFoundError(f"Model weights not found at {self.settings.model_path}")
                 
-            # Initialize model with rgb_only flag
-            self.classifier = DualStreamKnotClassifier(num_classes=len(self.STAGES), rgb_only=self.settings.rgb_only)
+            # Initialize model
+            self.classifier = KnotClassifier(num_classes=len(self.STAGES))
             logger.info("Loading model weights...")
             model_state = torch.load(self.settings.model_path, map_location=self.device)
             self.classifier.load_state_dict(model_state)
@@ -163,24 +117,21 @@ class KnotClassifierAPI:
             self.classifier.eval()
             logger.info("Model loaded successfully")
             
-            if self.settings.rgb_only:
-                logger.info("Running in RGB-only mode")
-            
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
             raise
         
         # Initialize camera
         try:
-            self.camera = ImiCamera(color_index=self.settings.camera_index)
-            self.camera.initialize()
+            self.camera = GenericCamera(
+                camera_index=self.settings.camera_index,
+                resolution=(self.settings.width, self.settings.height),
+                fps=self.settings.fps
+            )
             
-            # Only open depth stream if not in RGB-only mode
-            if not self.settings.rgb_only:
-                self.camera.open_stream(StreamType.DEPTH)
-                logger.info("Depth stream opened successfully")
-            
-            self.camera.open_stream(StreamType.COLOR)
+            if not self.camera.initialize():
+                raise RuntimeError(f"Failed to initialize camera with index {self.settings.camera_index}")
+                
             logger.info(f"Camera initialized with index {self.settings.camera_index}")
             
         except Exception as e:
@@ -192,29 +143,12 @@ class KnotClassifierAPI:
         self.is_running = True
         self.processing_thread.start()
         
-    def preprocess_frames(self, rgb_frame, depth_frame=None):
-        """Preprocess frames for model input
-        
-        In RGB-only mode, depth_frame may be None
-        """
-        # Process RGB
-        rgb = cv2.cvtColor(rgb_frame.data, cv2.COLOR_BGR2RGB)
+    def preprocess_frame(self, frame_data):
+        """Preprocess frame for model input"""
+        # Convert BGR to RGB
+        rgb = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
         rgb_tensor = self.rgb_transform(rgb).unsqueeze(0).to(self.device)
-        
-        # Process depth if available and not in RGB-only mode
-        depth_tensor = None
-        if not self.settings.rgb_only and depth_frame is not None:
-            depth = depth_frame.data
-            depth_min = depth[depth > 0].min() if np.any(depth > 0) else 0
-            depth_max = depth.max()
-            depth_normalized = np.zeros_like(depth, dtype=np.uint8)
-            if depth_max > depth_min:
-                valid_mask = depth > 0
-                depth_normalized[valid_mask] = ((depth[valid_mask] - depth_min) * 255 / 
-                                              (depth_max - depth_min))
-            depth_tensor = self.depth_transform(depth_normalized).unsqueeze(0).to(self.device)
-        
-        return rgb_tensor, depth_tensor
+        return rgb_tensor
         
     def process_frames(self):
         """Main processing loop"""
@@ -224,16 +158,11 @@ class KnotClassifierAPI:
         
         while self.is_running:
             try:
-                # Get color frame
-                color_frame = self.camera.get_frame(StreamType.COLOR)
+                # Get frame from camera
+                frame = self.camera.get_frame()
                 
-                # Get depth frame if not in RGB-only mode
-                depth_frame = None
-                if not self.settings.rgb_only:
-                    depth_frame = self.camera.get_frame(StreamType.DEPTH)
-                
-                # Process frames if color is available (and depth in RGB-D mode)
-                if color_frame is not None and (self.settings.rgb_only or depth_frame is not None):
+                # Process frame if available
+                if frame is not None:
                     # Update FPS
                     frame_count += 1
                     if frame_count % 30 == 0:
@@ -242,21 +171,15 @@ class KnotClassifierAPI:
                         last_time = current_time
                         logger.info(f"Processing frames at {self.fps:.1f} FPS")
                     
-                    # Process frames for visualization
-                    color_viz = color_frame.data.copy()
+                    # Process frame for visualization
+                    display_frame = frame.data.copy()
                     
                     # Get model prediction
                     with torch.no_grad():
-                        rgb_tensor, depth_tensor = self.preprocess_frames(color_frame, depth_frame)
+                        rgb_tensor = self.preprocess_frame(frame.data)
                         self.last_rgb_tensor = rgb_tensor
                         
-                        if not self.settings.rgb_only and depth_tensor is not None:
-                            self.last_depth_tensor = depth_tensor
-                            outputs = self.classifier(rgb_tensor, depth_tensor)
-                        else:
-                            # Use RGB-only mode for inference
-                            outputs = self.classifier(rgb_tensor)
-                            
+                        outputs = self.classifier(rgb_tensor)
                         probabilities = torch.nn.functional.softmax(outputs, dim=1)
                         confidence, predicted = torch.max(probabilities, 1)
                         confidence = confidence.item()
@@ -273,76 +196,25 @@ class KnotClassifierAPI:
                         "timestamp": datetime.now().isoformat()
                     }
                     
-                    # Add text overlays to color frame
+                    # Add text overlays to display frame
                     confidence_color = (0, 255, 0) if confidence >= self.settings.confidence_threshold else (0, 165, 255)
-                    cv2.putText(color_viz, f"Stage: {predicted_stage}", 
+                    cv2.putText(display_frame, f"Stage: {predicted_stage}", 
                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                               confidence_color, 2)
-                    cv2.putText(color_viz, f"Confidence: {confidence:.2f}", 
+                    cv2.putText(display_frame, f"Confidence: {confidence:.2f}", 
                               (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                               confidence_color, 2)
-                    cv2.putText(color_viz, f"FPS: {self.fps:.1f}", 
+                    cv2.putText(display_frame, f"FPS: {self.fps:.1f}", 
                               (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                               (255, 255, 255), 2)
                     
-                    # Add mode indicator
-                    if self.settings.rgb_only:
-                        cv2.putText(color_viz, "Mode: RGB-only", 
-                                  (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
-                                  (0, 165, 255), 2)
-                    
-                    # In RGB-only mode, we just use the color frame
-                    if self.settings.rgb_only:
-                        combined_frame = color_viz
-                    else:
-                        # Process depth frame for visualization
-                        depth_viz = depth_frame.data.copy()
-                        
-                        # Normalize and colorize depth frame
-                        depth_min = depth_viz[depth_viz > 0].min() if np.any(depth_viz > 0) else 0
-                        depth_max = depth_viz.max()
-                        depth_normalized = np.zeros_like(depth_viz, dtype=np.uint8)
-                        if depth_max > depth_min:
-                            valid_mask = depth_viz > 0
-                            depth_normalized[valid_mask] = ((depth_viz[valid_mask] - depth_min) * 255 / 
-                                                          (depth_max - depth_min))
-                        depth_colormap = cv2.applyColorMap(depth_normalized, self.viz_config.colormap.value)
-                        
-                        # Ensure same size before combining
-                        if depth_colormap.shape[:2] != color_viz.shape[:2]:
-                            depth_colormap = cv2.resize(depth_colormap, 
-                                                      (color_viz.shape[1], color_viz.shape[0]))
-                            
-                        # Apply alignment shift
-                        rows, cols = depth_colormap.shape[:2]
-                        shift_matrix = np.float32([[1, 0, self.settings.horizontal_shift],
-                                                [0, 1, self.settings.vertical_shift]])
-                        depth_colormap = cv2.warpAffine(depth_colormap,
-                                                    shift_matrix,
-                                                    (cols, rows),
-                                                    borderMode=cv2.BORDER_CONSTANT,
-                                                    borderValue=[0, 0, 0])
-                        
-                        if self.viz_config.view_mode == "overlay":
-                            alpha = 0.7
-                            combined_frame = cv2.addWeighted(depth_colormap, alpha, color_viz, 1-alpha, 0)
-                        else:  # side-by-side
-                            combined_frame = np.hstack((color_viz, depth_colormap))
-                            
-                        # Add alignment info if in alignment mode
-                        if self.settings.alignment_mode:
-                            cv2.putText(combined_frame, 
-                                    f"Alignment Mode: v={self.settings.vertical_shift} h={self.settings.horizontal_shift}",
-                                    (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                                    (255, 255, 255), 2)
-                    
-                    # Update frame queue
+                    # Update frame queue for streaming
                     try:
-                        self.frame_queue.put_nowait(combined_frame)
+                        self.frame_queue.put_nowait(display_frame)
                     except queue.Full:
                         try:
                             self.frame_queue.get_nowait()
-                            self.frame_queue.put_nowait(combined_frame)
+                            self.frame_queue.put_nowait(display_frame)
                         except queue.Empty:
                             pass
                             
@@ -367,27 +239,21 @@ class KnotClassifierAPI:
     def get_status(self) -> Dict:
         """Get current system status"""
         return {
-            "camera_connected": True,
-            "model_loaded": True,
+            "camera_connected": self.camera is not None and self.camera.is_initialized,
+            "model_loaded": hasattr(self, 'classifier'),
             "fps": self.fps,
             "timestamp": datetime.now().isoformat(),
-            "rgb_only": self.settings.rgb_only
+            "camera_index": self.settings.camera_index,
+            "resolution": f"{self.settings.width}x{self.settings.height}"
         }
     
     def get_classification(self) -> Dict:
         """Get latest classification with detailed probabilities"""
         with torch.no_grad():
             if hasattr(self, 'last_rgb_tensor'):
-                if not self.settings.rgb_only and hasattr(self, 'last_depth_tensor'):
-                    outputs = self.classifier(self.last_rgb_tensor, self.last_depth_tensor)
-                else:
-                    outputs = self.classifier(self.last_rgb_tensor)
-                    
-                if outputs is not None:
-                    probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
-                    all_probs = {stage: float(prob) for stage, prob in zip(self.STAGES, probabilities)}
-                else:
-                    all_probs = {stage: 0.0 for stage in self.STAGES}
+                outputs = self.classifier(self.last_rgb_tensor)
+                probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
+                all_probs = {stage: float(prob) for stage, prob in zip(self.STAGES, probabilities)}
             else:
                 all_probs = {stage: 0.0 for stage in self.STAGES}
                 
@@ -395,8 +261,7 @@ class KnotClassifierAPI:
             "stage": self.latest_classification["stage"],
             "confidence": self.latest_classification["confidence"],
             "timestamp": self.latest_classification["timestamp"],
-            "probabilities": all_probs,
-            "rgb_only": self.settings.rgb_only
+            "probabilities": all_probs
         }
     
     def get_stream(self):
@@ -411,20 +276,24 @@ class KnotClassifierAPI:
         return self.settings
     
     def update_settings(self, new_settings: Settings):
-        """Update settings"""
-        # Store the previous RGB-only mode setting
-        was_rgb_only = self.settings.rgb_only
+        """Update settings
+        
+        Note: Camera changes require restart
+        """
+        # Check if camera settings changed
+        camera_changed = (
+            self.settings.camera_index != new_settings.camera_index or
+            self.settings.width != new_settings.width or
+            self.settings.height != new_settings.height or
+            self.settings.fps != new_settings.fps
+        )
         
         # Update settings
         self.settings = new_settings
-        self.viz_config.view_mode = new_settings.view_mode
-        self.viz_config.auto_range = new_settings.auto_range
         
-        # Check if RGB-only mode changed
-        if was_rgb_only != new_settings.rgb_only:
-            logger.info(f"RGB-only mode changed to {new_settings.rgb_only}. Restart required.")
-            return {"status": "restart_required", "message": "RGB-only mode change requires restart"}
-        
+        # Return appropriate status
+        if camera_changed:
+            return {"status": "restart_required", "message": "Camera settings change requires restart"}
         return {"status": "success"}
     
     def cleanup(self):
@@ -440,12 +309,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Knot Classifier API Server')
     
     # Camera settings
-    parser.add_argument('--camera-index', type=int, default=7,
-                      help='Index of the color camera to use (default: 7)')
-    
-    # RGB-only mode
-    parser.add_argument('--rgb-only', action='store_true',
-                      help='Use RGB-only mode (no depth data)')
+    parser.add_argument('--camera-index', type=int, default=0,
+                      help='Index of the camera to use (default: 0)')
+    parser.add_argument('--width', type=int, default=640,
+                      help='Camera resolution width (default: 640)')
+    parser.add_argument('--height', type=int, default=480,
+                      help='Camera resolution height (default: 480)')
+    parser.add_argument('--fps', type=int, default=30,
+                      help='Camera frames per second (default: 30)')
     
     # Model settings
     parser.add_argument('--model-path', type=str, default='best_model.pth',
@@ -453,30 +324,11 @@ def parse_args():
     parser.add_argument('--confidence-threshold', type=float, default=0.7,
                       help='Minimum confidence threshold for classifications (default: 0.7)')
     
-    # Visualization settings
-    parser.add_argument('--view-mode', type=str, default='side-by-side',
-                      choices=['side-by-side', 'overlay'],
-                      help='Visualization mode (default: side-by-side)')
-    parser.add_argument('--auto-range', type=bool, default=True,
-                      help='Automatically adjust depth range (default: True)')
-    parser.add_argument('--min-depth', type=int, default=100,
-                      help='Minimum depth value in mm (default: 100)')
-    parser.add_argument('--max-depth', type=int, default=1000,
-                      help='Maximum depth value in mm (default: 1000)')
-    
-    # Image alignment settings
-    parser.add_argument('--vertical-shift', type=int, default=47,
-                      help='Vertical shift for depth-color alignment (default: 71)')
-    parser.add_argument('--horizontal-shift', type=int, default=28,
-                      help='Horizontal shift for depth-color alignment (default: 45)')
-    parser.add_argument('--alignment-mode', action='store_true',
-                      help='Enable alignment adjustment mode')
-    
     # Server settings
     parser.add_argument('--host', type=str, default='0.0.0.0',
                       help='Host address to bind the server (default: 0.0.0.0)')
-    parser.add_argument('--port', type=int, default=8002,
-                      help='Port number for the server (default: 8002)')
+    parser.add_argument('--port', type=int, default=8000,
+                      help='Port number for the server (default: 8000)')
     
     return parser.parse_args()
 
@@ -490,16 +342,11 @@ async def lifespan(app: FastAPI):
     args = parse_args()
     settings = Settings(
         camera_index=args.camera_index,
-        rgb_only=args.rgb_only,
+        width=args.width,
+        height=args.height,
+        fps=args.fps,
         model_path=args.model_path,
         confidence_threshold=args.confidence_threshold,
-        view_mode=args.view_mode,
-        auto_range=args.auto_range,
-        min_depth=args.min_depth,
-        max_depth=args.max_depth,
-        vertical_shift=args.vertical_shift,
-        horizontal_shift=args.horizontal_shift,
-        alignment_mode=args.alignment_mode,
         host=args.host,
         port=args.port
     )
@@ -510,7 +357,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Knot Classifier API",
-    description="API for real-time knot tying classification using RGB or RGB-D camera",
+    description="API for real-time knot tying classification using RGB camera",
     lifespan=lifespan
 )
 
@@ -525,7 +372,7 @@ async def get_status():
             - Model loading status
             - Current FPS
             - Current timestamp
-            - RGB-only mode status
+            - Camera index and resolution
     """
     return classifier_api.get_status()
 
@@ -540,7 +387,6 @@ async def get_classification():
             - Confidence score (0.0 to 1.0)
             - Timestamp of classification
             - Individual probability scores for each possible stage
-            - RGB-only mode status
     """
     return classifier_api.get_classification()
 
@@ -551,8 +397,7 @@ async def get_stream():
     
     Returns:
         StreamingResponse: MJPEG stream containing:
-            - Color camera feed
-            - Depth visualization (if not in RGB-only mode)
+            - Camera feed with overlay
             - Current classification results
             - FPS counter
             
@@ -560,60 +405,13 @@ async def get_stream():
         500: If stream cannot be initialized or encounters an error
     """
     try:
-        return StreamingResponse(
-            classifier_api.encode_frame(),
-            media_type='multipart/x-mixed-replace; boundary=frame'
-        )
+        return classifier_api.get_stream()
     except Exception as e:
         logger.error(f"Stream error: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"error": "Stream error occurred"}
         )
-
-@app.post("/alignment")
-async def update_alignment(
-    vertical_shift: Optional[int] = None,
-    horizontal_shift: Optional[int] = None,
-    mode: Optional[bool] = None
-):
-    """
-    Update depth-color camera alignment parameters.
-    
-    Only available in RGB-D mode (not in RGB-only mode).
-    
-    Args:
-        vertical_shift: Vertical offset in pixels for depth image alignment.
-            Positive values move depth image down, negative values move it up.
-        horizontal_shift: Horizontal offset in pixels for depth image alignment.
-            Positive values move depth image right, negative values move it left.
-        mode: Enable/disable alignment adjustment mode. When enabled, shows current
-            alignment values in the video stream.
-    
-    Returns:
-        dict: Current alignment settings after update:
-            - vertical_shift: Current vertical offset
-            - horizontal_shift: Current horizontal offset
-            - alignment_mode: Whether alignment mode is enabled
-    """
-    if classifier_api.settings.rgb_only:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Alignment is not available in RGB-only mode"}
-        )
-        
-    if vertical_shift is not None:
-        classifier_api.settings.vertical_shift = vertical_shift
-    if horizontal_shift is not None:
-        classifier_api.settings.horizontal_shift = horizontal_shift
-    if mode is not None:
-        classifier_api.settings.alignment_mode = mode
-        
-    return {
-        "vertical_shift": classifier_api.settings.vertical_shift,
-        "horizontal_shift": classifier_api.settings.horizontal_shift,
-        "alignment_mode": classifier_api.settings.alignment_mode
-    }
 
 @app.get("/settings")
 async def get_settings():
@@ -622,12 +420,9 @@ async def get_settings():
     
     Returns:
         Settings: Complete settings object containing:
-            - Camera settings (index)
-            - RGB-only mode status
+            - Camera settings (index, resolution, fps)
             - Model settings (path, confidence threshold)
-            - Visualization settings (view mode, depth range)
             - Server settings (host, port)
-            - Alignment settings (shifts, mode)
     """
     return classifier_api.get_settings()
 
