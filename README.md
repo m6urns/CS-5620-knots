@@ -218,14 +218,6 @@ Access the video stream in a browser:
 http://localhost:8000/stream
 ```
 
-### 6. Demo Application
-
-A simple demo application for testing the camera and visualization:
-
-```
-python demo_camera.py --camera-index 0 --width 640 --height 480
-```
-
 ## Examples
 
 ### Complete Classification Pipeline
