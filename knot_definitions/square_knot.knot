@@ -1,0 +1,46 @@
+{
+  "name": "square_knot",
+  "description": "A square knot (reef knot) with eight stages",
+  "stages": [
+    {
+      "id": "starting",
+      "name": "Starting Position",
+      "description": "Two rope ends side by side"
+    },
+    {
+      "id": "right_over_left",
+      "name": "Right Over Left",
+      "description": "Cross right end over left"
+    },
+    {
+      "id": "right_under_left",
+      "name": "Right Under Left",
+      "description": "Pass right end under left"
+    },
+    {
+      "id": "half_complete",
+      "name": "Half-Knot Complete",
+      "description": "First half of the knot is complete"
+    },
+    {
+      "id": "left_over_right",
+      "name": "Left Over Right",
+      "description": "Cross left end over right"
+    },
+    {
+      "id": "left_under_right",
+      "name": "Left Under Right",
+      "description": "Pass left end under right"
+    },
+    {
+      "id": "tighten",
+      "name": "Tighten",
+      "description": "Pull all ends to tighten the knot"
+    },
+    {
+      "id": "complete",
+      "name": "Complete",
+      "description": "A tightened, completed square knot"
+    }
+  ]
+}

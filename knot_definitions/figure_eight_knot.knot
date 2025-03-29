@@ -1,0 +1,41 @@
+{
+  "name": "figure_eight_knot",
+  "description": "A figure-eight knot with seven stages",
+  "stages": [
+    {
+      "id": "starting",
+      "name": "Starting Position",
+      "description": "Loose rope in initial position"
+    },
+    {
+      "id": "first_loop",
+      "name": "First Loop",
+      "description": "Create the first loop (away from the end)"
+    },
+    {
+      "id": "pass_through",
+      "name": "Pass Through",
+      "description": "Pass the working end up through the loop"
+    },
+    {
+      "id": "wrap_around",
+      "name": "Wrap Around",
+      "description": "Wrap the working end around the standing part"
+    },
+    {
+      "id": "pass_back",
+      "name": "Pass Back",
+      "description": "Pass the working end back down through the first loop"
+    },
+    {
+      "id": "tighten",
+      "name": "Tighten",
+      "description": "Pull all ends to tighten the knot"
+    },
+    {
+      "id": "complete",
+      "name": "Complete",
+      "description": "A tightened, completed figure-eight knot"
+    }
+  ]
+}
