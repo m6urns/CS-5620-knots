@@ -9,7 +9,8 @@ from datetime import datetime
 from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sns
 
-from knot_classifier import KnotClassifier, KnotDataset, train_model
+from knots.knot_definition import KnotDefinition
+from knots.knot_classifier import KnotClassifier, KnotDataset, train_model
 
 def parse_args():
     """Parse command line arguments"""
@@ -18,6 +19,8 @@ def parse_args():
     # Dataset arguments
     parser.add_argument('--data-path', type=str, default="overhand_knot_dataset",
                       help='Path to dataset directory (default: overhand_knot_dataset)')
+    parser.add_argument('--knot-def-path', type=str, default=None,
+                      help='Path to knot definition file (.knot) (default: None, will try to load from dataset)')
     parser.add_argument('--batch-size', type=int, default=4,
                       help='Batch size for training (default: 4)')
     parser.add_argument('--val-split', type=float, default=0.2,
@@ -39,27 +42,26 @@ def parse_args():
     
     return parser.parse_args()
 
-def create_data_loaders(data_path, batch_size, val_split):
+def create_data_loaders(data_path, knot_def, batch_size, val_split):
     """Create training and validation data loaders
     
     Args:
         data_path: Path to dataset directory
+        knot_def: Knot definition or None
         batch_size: Batch size for training
         val_split: Validation split ratio (0.0 to 1.0)
         
     Returns:
-        tuple: (train_loader, val_loader, class_names)
+        tuple: (train_loader, val_loader)
     """
     print(f"Loading dataset from {data_path}...")
     
-    # Create dataset
-    dataset = KnotDataset(data_path)
+    # Create dataset with knot definition
+    dataset = KnotDataset(data_path, knot_def=knot_def)
     
-    # Get class names
-    class_names = []
-    for sample in dataset.samples:
-        if sample['stage'] not in class_names:
-            class_names.append(sample['stage'])
+    # Get class names and distribution
+    class_names = dataset.class_names
+    distribution = dataset.class_distribution
     
     # Calculate split
     val_size = int(len(dataset) * val_split)
@@ -78,11 +80,7 @@ def create_data_loaders(data_path, batch_size, val_split):
     print(f"Validation samples: {len(val_dataset)}")
     
     print("\nClass distribution:")
-    stage_counts = {}
-    for sample in dataset.samples:
-        stage = sample['stage']
-        stage_counts[stage] = stage_counts.get(stage, 0) + 1
-    for stage, count in stage_counts.items():
+    for stage, count in distribution.items():
         print(f"  {stage}: {count} samples")
     
     return train_loader, val_loader, class_names
@@ -161,13 +159,33 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
     print(f"Using device: {device}")
     
+    # Load knot definition if provided
+    knot_def = None
+    if args.knot_def_path:
+        try:
+            knot_def = KnotDefinition.from_file(args.knot_def_path)
+            print(f"Loaded knot definition: {knot_def.name}")
+            print(f"Stages: {knot_def.stage_ids}")
+            print(f"Description: {knot_def.description}")
+        except Exception as e:
+            print(f"Error loading knot definition: {e}")
+    else:
+        # Try to find knot definition in the dataset directory
+        knot_files = list(Path(args.data_path).glob("*.knot"))
+        if knot_files:
+            try:
+                knot_def = KnotDefinition.from_file(knot_files[0])
+                print(f"Found and loaded knot definition from dataset: {knot_def.name}")
+            except Exception as e:
+                print(f"Error loading knot definition from dataset: {e}")
+    
     # Create data loaders
     train_loader, val_loader, class_names = create_data_loaders(
-        args.data_path, args.batch_size, args.val_split)
+        args.data_path, knot_def, args.batch_size, args.val_split)
     
     # Create model
     print("\nInitializing model...")
-    model = KnotClassifier(num_classes=len(class_names))
+    model = KnotClassifier(knot_def=knot_def)
     model = model.to(device)
     
     # Train model
@@ -182,15 +200,21 @@ def main():
         early_stopping_patience=args.early_stopping
     )
     
-    # Save the latest model 
-    latest_model_path = os.path.join(output_dir, 'latest_model.pth')
-    torch.save(model.state_dict(), latest_model_path)
+    # Save the latest model
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    latest_model_path = os.path.join(output_dir, f'latest_model_{timestamp}.pth')
+    
+    # Save with knot definition if available
+    if hasattr(model, 'knot_def') and model.knot_def is not None:
+        model.save_with_knot_def(latest_model_path)
+    else:
+        torch.save(model.state_dict(), latest_model_path)
+        
     print(f"\nLatest model saved to {latest_model_path}")
     
     # Copy best model
     best_model_path = 'best_model.pth'  # Created by train_model function
     if os.path.exists(best_model_path):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_best_path = os.path.join(output_dir, f'best_model_{timestamp}.pth')
         
         import shutil
@@ -199,9 +223,12 @@ def main():
     
     # Load best model for evaluation
     print("\nLoading best model for evaluation...")
-    best_model = KnotClassifier(num_classes=len(class_names))
-    best_model.load_state_dict(torch.load(best_model_path))
-    best_model = best_model.to(device)
+    if hasattr(model, 'knot_def') and model.knot_def is not None:
+        best_model = KnotClassifier.load_with_knot_def(best_model_path, device)
+    else:
+        best_model = KnotClassifier(num_classes=len(class_names))
+        best_model.load_state_dict(torch.load(best_model_path))
+        best_model = best_model.to(device)
     
     # Evaluate model
     print("\nEvaluating model...")

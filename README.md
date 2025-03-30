@@ -1,38 +1,20 @@
-
-
 # CS-5620-knots - Knot Classification System
 
 A real-time knot tying classification system using computer vision with OpenCV and PyTorch.
 
 ## Overview
 
-This system provides real-time classification of overhand knot tying stages using RGB camera input and deep learning. It consists of several modular components that can be used independently or together:
+This system provides real-time classification of knot tying stages using RGB camera input and deep learning. It features a generic knot definition system that allows you to define and classify any type of knot with arbitrary stages. The system consists of several modular components:
 
-1. **Generic Camera Interface**: Simplified camera access using OpenCV
-2. **Visualization Module**: Real-time display of camera feed with overlays
-3. **Data Collection Tool**: Interactive tool for collecting knot tying dataset
-4. **Knot Classifier**: Machine learning model for classifying knot tying stages
-5. **Training Script**: Dedicated tool for training and evaluating models
-6. **Classifier API**: Web service for real-time classification
+1. **Knot Definition**: Standardized format for defining any knot and its stages
+2. **Generic Camera Interface**: Simplified camera access using OpenCV
+3. **Visualization Module**: Real-time display of camera feed with overlays
+4. **Data Collection Tool**: Interactive tool for collecting knot tying dataset
+5. **Knot Classifier**: Machine learning model for classifying knot tying stages
+6. **Training Script**: Dedicated tool for training and evaluating models
+7. **Classifier API**: Web service for real-time classification
 
 ## Requirements
-
-### Hardware
-- Any webcam or camera compatible with OpenCV
-- Computer with CPU/GPU capable of running PyTorch
-
-### Software Dependencies
-```
-numpy>=1.20.0
-opencv-python>=4.5.0
-torch>=1.9.0
-torchvision>=0.10.0
-fastapi>=0.68.0
-uvicorn>=0.15.0
-matplotlib>=3.4.0  # For training visualization only
-seaborn>=0.11.0    # For training visualization only
-scikit-learn>=0.24.0  # For evaluation metrics
-```
 
 ## Setup
 
@@ -42,9 +24,9 @@ scikit-learn>=0.24.0  # For evaluation metrics
    cd knot-classification
    ```
 
-2. Install dependencies:
+2. Install the package in development mode:
    ```
-   pip install -r requirements.txt
+   pip install -e .
    ```
 
 3. Check camera availability:
@@ -53,9 +35,79 @@ scikit-learn>=0.24.0  # For evaluation metrics
    ```
    This will print available camera indices.
 
+## Knot Definitions
+
+The system uses a standardized `.knot` file format (JSON) to define knots and their stages. Each file includes:
+
+- Name of the knot
+- Description of the knot
+- An ordered list of stages, each with:
+  - ID: Unique identifier (e.g., "loop")
+  - Name: Human-readable name (e.g., "Loop Created")
+  - Description: Detailed instructions or description
+
+Example knot definition (overhand_knot.knot):
+```json
+{
+  "name": "overhand_knot",
+  "description": "A basic overhand knot with four stages",
+  "stages": [
+    {
+      "id": "loose",
+      "name": "Loose Rope",
+      "description": "Starting position with loose rope"
+    },
+    {
+      "id": "loop",
+      "name": "Loop Created",
+      "description": "A loop has been formed but not pulled through"
+    },
+    {
+      "id": "complete",
+      "name": "Knot Completed",
+      "description": "Basic knot structure is complete but not tightened"
+    },
+    {
+      "id": "tightened",
+      "name": "Knot Tightened",
+      "description": "The knot has been tightened and is secure"
+    }
+  ]
+}
+```
+
+The project includes several predefined knot definitions:
+- `overhand_knot.knot`: A basic 4-stage knot
+- `figure_eight_knot.knot`: A 7-stage figure-eight knot
+- `square_knot.knot`: An 8-stage square (reef) knot
+
+You can create your own custom knot definitions by following this format.
+
 ## Components
 
-### 1. Generic Camera
+### 1. Knot Definition Module
+
+The `KnotDefinition` class provides methods for working with knot definitions:
+
+```python
+from knots.knot_definition import KnotDefinition
+
+# Load a knot definition
+knot_def = KnotDefinition.from_file("knot_definitions/overhand_knot.knot")
+
+# Access properties
+print(f"Knot: {knot_def.name}")
+print(f"Description: {knot_def.description}")
+print(f"Number of stages: {knot_def.stage_count}")
+
+# Access stages
+for stage_id in knot_def.stage_ids:
+    stage = knot_def.get_stage(stage_id)
+    print(f"Stage: {stage.name} ({stage.id})")
+    print(f"  Description: {stage.description}")
+```
+
+### 2. Generic Camera
 
 The `GenericCamera` class provides a simple interface to access any camera compatible with OpenCV.
 
@@ -81,14 +133,7 @@ for _ in range(10):
 camera.close()
 ```
 
-You can also use context manager syntax:
-```python
-with GenericCamera(camera_index=0) as camera:
-    frame = camera.get_frame()
-    # Process frame...
-```
-
-### 2. Visualization
+### 3. Visualization
 
 The `FrameVisualizer` class helps display camera frames with overlays.
 
@@ -124,18 +169,22 @@ finally:
     visualizer.close()
 ```
 
-### 3. Data Collection Tool
+### 4. Data Collection Tool
 
-The data collection tool helps create a dataset of knot tying stages.
+The data collection tool lets you create a dataset for any knot defined in a `.knot` file.
 
-Run the tool:
+Run the tool with a specific knot definition:
 ```
-python knot_data_collector.py --camera-index 0 --width 640 --height 480
+python collect_overhand_data.py
+# or
+python collect_figure_eight_data.py
+# or
+python -m knots.knot_data_collector --knot-def-path knot_definitions/square_knot.knot
 ```
 
 Controls:
 - **Space**: Capture sample
-- **S**: Cycle through knot stages (loose, loop, complete, tightened)
+- **S**: Cycle through knot stages
 - **N**: Add note to next capture
 - **Q**: Quit
 
@@ -152,16 +201,20 @@ overhand_knot_dataset/
 │   └── ...
 ├── tightened/
 │   └── ...
+├── overhand_knot.knot  # The knot definition used
 └── sample_counts.json
 ```
 
-### 4. Training a Classifier
+### 5. Training a Classifier
 
-The training script handles dataset loading, model training, and evaluation.
+Train classifiers for any knot type using the simplified scripts:
 
-Run the training:
 ```
-python train_classifier.py --data-path overhand_knot_dataset --epochs 30 --batch-size 4
+python train_overhand_knot.py
+# or
+python train_figure_eight.py
+# or
+python train_classifier.py --data-path square_knot_dataset --knot-def-path knot_definitions/square_knot.knot
 ```
 
 Additional options:
@@ -172,22 +225,25 @@ Additional options:
 - `--no-cuda`: Disable CUDA even if available
 
 Output:
-- `models/best_model_TIMESTAMP.pth`: Best model weights
-- `models/latest_model.pth`: Latest model weights
+- `models/best_model_TIMESTAMP.pth`: Best model weights with embedded knot definition
 - `models/confusion_matrix.png`: Confusion matrix visualization
 
-### 5. Classification API
+### 6. Classification API
 
-The API service provides real-time classification through a web interface.
+The API service provides real-time classification for any knot type.
 
-Start the API server:
+Start the API server with a specific knot:
 ```
-python classifier_api.py --camera-index 0 --model-path models/best_model.pth
+python run_overhand_classifier_api.py
+# or
+python run_figure_eight_classifier_api.py
+# or
+python -m knots.classifier_api --model-path path/to/model.pth --knot-def-path knot_definitions/custom_knot.knot
 ```
 
 API Endpoints:
-- `GET /status`: System status
-- `GET /classification`: Latest classification result
+- `GET /status`: System status (including knot definition and stages)
+- `GET /classification`: Latest classification result (with stage names and descriptions)
 - `GET /stream`: Live video stream with classification overlay
 - `GET /settings`: Current settings
 - `POST /settings`: Update settings
@@ -213,31 +269,46 @@ response = requests.post("http://localhost:8000/settings", json=new_settings)
 print(json.dumps(response.json(), indent=2))
 ```
 
-Access the video stream in a browser:
-```
-http://localhost:8000/stream
-```
+## Complete Examples
 
-## Examples
-
-### Complete Classification Pipeline
+### Overhand Knot Classification Pipeline
 
 1. Collect data:
    ```
-   python knot_data_collector.py --camera-index 0
+   python collect_overhand_data.py
    ```
 
 2. Train model:
    ```
-   python train_classifier.py --data-path overhand_knot_dataset
+   python train_overhand_knot.py
    ```
 
 3. Start classification API:
    ```
-   python classifier_api.py --camera-index 0 --model-path models/best_model.pth
+   python run_overhand_classifier_api.py
    ```
 
 4. View the results in a browser:
    ```
    http://localhost:8000/stream
    ```
+
+## Testing
+
+Run the tests with pytest:
+```
+pytest
+# or for more detailed output
+pytest -v
+```
+
+## Extending the System
+
+To add a new knot type:
+
+1. Create a `.knot` definition file in the `knot_definitions` directory
+2. Collect data using `knot_data_collector.py` with your definition
+3. Train a model using `train_classifier.py` with your dataset
+4. Run the API with your model and definition
+
+The system is designed to be flexible and can accommodate any knot type with any number of stages.
