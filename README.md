@@ -14,6 +14,52 @@ This system provides real-time classification of knot tying stages using RGB cam
 6. **Training Script**: Dedicated tool for training and evaluating models
 7. **Classifier API**: Web service for real-time classification
 
+## Structure
+
+```
+knot-classifier/
+│
+├── README.md                          # Project documentation
+├── setup.py                           # Package installation
+├── requirements.txt                   # Dependencies
+│
+├── knots/                             # Core package directory  
+│   ├── __init__.py                    
+│   ├── knot_definition.py             # Knot structure definitions
+│   ├── knot_classifier.py             # ML model for classification
+│   ├── knot_data_collector.py         # Data collection utilities
+│   ├── classifier_api.py              # API for inference
+│   ├── utils/                         # Utility modules
+│   │   ├── __init__.py
+│   │   ├── generic_camera.py          # Camera utilities
+│   │   └── visualization.py           # Visualization utilities
+│   └── tests/                         # Unit tests
+│       ├── __init__.py
+│       ├── test_knot_classifier.py
+│       ├── test_knot_data_collector.py
+│       └── test_knot_definition.py
+│
+├── scripts/                           # Command-line scripts
+│   ├── train_classifier.py            # Generic training script
+│   ├── train_overhand_knot.py         # Knot-specific training
+│   ├── run_overhand_classifier.py     # Run classifier for specific knot
+│   └── collect_overhand_knot.py       # Collect data for specific knot
+│
+├── knot_definitions/                  # Knot definition files
+│   ├── overhand_knot.knot
+│   ├── figure_eight_knot.knot
+│   └── square_knot.knot
+│
+├── data/                              # Data storage
+│   └── overhand_knot/                 # Dataset for overhand knot
+│
+└── models/                            # Model storage
+    └── overhand_knot/                 # Knot-specific models
+        ├── best_model.pth             # Latest best model
+        ├── confusion_matrix.png       # Evaluation results
+        └── evaluation_metrics.json    # Performance metrics
+```
+
 ## Requirements
 
 ## Setup
@@ -76,7 +122,7 @@ Example knot definition (overhand_knot.knot):
 }
 ```
 
-The project includes several predefined knot definitions:
+The project includes several predefined knot definitions in the `knot_definitions/` directory:
 - `overhand_knot.knot`: A basic 4-stage knot
 - `figure_eight_knot.knot`: A 7-stage figure-eight knot
 - `square_knot.knot`: An 8-stage square (reef) knot
@@ -113,7 +159,7 @@ The `GenericCamera` class provides a simple interface to access any camera compa
 
 Example usage:
 ```python
-from generic_camera import GenericCamera
+from knots.utils.generic_camera import GenericCamera
 
 # List available cameras
 cameras = GenericCamera.list_available_cameras()
@@ -139,8 +185,8 @@ The `FrameVisualizer` class helps display camera frames with overlays.
 
 Example usage:
 ```python
-from visualization import FrameVisualizer, VisualizationConfig
-from generic_camera import GenericCamera
+from knots.utils.visualization import FrameVisualizer, VisualizationConfig
+from knots.utils.generic_camera import GenericCamera
 import cv2
 
 # Create visualization config
@@ -175,9 +221,9 @@ The data collection tool lets you create a dataset for any knot defined in a `.k
 
 Run the tool with a specific knot definition:
 ```
-python collect_overhand_data.py
+python -m scripts.collect_overhand_knot
 # or
-python collect_figure_eight_data.py
+python -m scripts.collect_figure_eight_knot
 # or
 python -m knots.knot_data_collector --knot-def-path knot_definitions/square_knot.knot
 ```
@@ -188,21 +234,22 @@ Controls:
 - **N**: Add note to next capture
 - **Q**: Quit
 
-Dataset structure:
+Dataset structure (now organized in the `data/` directory):
 ```
-overhand_knot_dataset/
-├── loose/
-│   └── 20230101_120000/
-│       ├── rgb.png
-│       └── metadata.json
-├── loop/
-│   └── ...
-├── complete/
-│   └── ...
-├── tightened/
-│   └── ...
-├── overhand_knot.knot  # The knot definition used
-└── sample_counts.json
+data/
+└── overhand_knot_dataset/
+    ├── loose/
+    │   └── 20230101_120000/
+    │       ├── rgb.png
+    │       └── metadata.json
+    ├── loop/
+    │   └── ...
+    ├── complete/
+    │   └── ...
+    ├── tightened/
+    │   └── ...
+    ├── overhand_knot.knot  # The knot definition used
+    └── sample_counts.json
 ```
 
 ### 5. Training a Classifier
@@ -210,11 +257,11 @@ overhand_knot_dataset/
 Train classifiers for any knot type using the simplified scripts:
 
 ```
-python train_overhand_knot.py
+python -m scripts.train_overhand_knot
 # or
-python train_figure_eight.py
+python -m scripts.train_figure_eight_knot
 # or
-python train_classifier.py --data-path square_knot_dataset --knot-def-path knot_definitions/square_knot.knot
+python -m scripts.train_classifier --data-path data/square_knot_dataset --knot-def-path knot_definitions/square_knot.knot
 ```
 
 Additional options:
@@ -224,9 +271,15 @@ Additional options:
 - `--output-dir models`: Directory to save models (default: models)
 - `--no-cuda`: Disable CUDA even if available
 
-Output:
-- `models/best_model_TIMESTAMP.pth`: Best model weights with embedded knot definition
-- `models/confusion_matrix.png`: Confusion matrix visualization
+Output (now organized by knot type):
+```
+models/
+└── overhand_knot/
+    ├── best_model.pth             # Latest best model 
+    ├── model_20250329_123045.pth  # Timestamped model version
+    ├── confusion_matrix.png       # Evaluation results
+    └── evaluation_metrics.json    # Performance metrics
+```
 
 ### 6. Classification API
 
@@ -234,11 +287,11 @@ The API service provides real-time classification for any knot type.
 
 Start the API server with a specific knot:
 ```
-python run_overhand_classifier_api.py
+python -m scripts.run_overhand_classifier
 # or
-python run_figure_eight_classifier_api.py
+python -m scripts.run_figure_eight_classifier
 # or
-python -m knots.classifier_api --model-path path/to/model.pth --knot-def-path knot_definitions/custom_knot.knot
+python -m knots.classifier_api --model-path models/custom_knot/best_model.pth --knot-def-path knot_definitions/custom_knot.knot
 ```
 
 API Endpoints:
@@ -275,17 +328,17 @@ print(json.dumps(response.json(), indent=2))
 
 1. Collect data:
    ```
-   python collect_overhand_data.py
+   python -m scripts.collect_overhand_knot
    ```
 
 2. Train model:
    ```
-   python train_overhand_knot.py
+   python -m scripts.train_overhand_knot
    ```
 
 3. Start classification API:
    ```
-   python run_overhand_classifier_api.py
+   python -m scripts.run_overhand_classifier
    ```
 
 4. View the results in a browser:
@@ -297,9 +350,7 @@ print(json.dumps(response.json(), indent=2))
 
 Run the tests with pytest:
 ```
-pytest
-# or for more detailed output
-pytest -v
+pytest -xvs knots/tests/
 ```
 
 ## Extending the System
@@ -307,8 +358,8 @@ pytest -v
 To add a new knot type:
 
 1. Create a `.knot` definition file in the `knot_definitions` directory
-2. Collect data using `knot_data_collector.py` with your definition
-3. Train a model using `train_classifier.py` with your dataset
+2. Collect data using the data collection scripts with your definition
+3. Train a model using the training scripts with your dataset
 4. Run the API with your model and definition
 
 The system is designed to be flexible and can accommodate any knot type with any number of stages.

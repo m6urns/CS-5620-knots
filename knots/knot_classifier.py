@@ -253,104 +253,176 @@ class KnotDataset(Dataset):
             distribution[sample['stage']] += 1
         return distribution
 
-def train_model(model, train_loader, val_loader, num_epochs=20, 
-                device='cuda', unfreeze_epoch=10, early_stopping_patience=5):
+def train_model(model, train_loader, val_loader, num_epochs=30, device='cpu',
+             unfreeze_epoch=10, early_stopping_patience=5, lr=0.001):
     """Train the knot classifier model
     
     Args:
-        model: KnotClassifier model
-        train_loader: DataLoader for training data
-        val_loader: DataLoader for validation data
-        num_epochs: Maximum number of training epochs
-        device: Device to train on ('cuda' or 'cpu')
-        unfreeze_epoch: Epoch after which to unfreeze backbone
-        early_stopping_patience: Patience for early stopping
+        model: Model to train
+        train_loader: Training data loader
+        val_loader: Validation data loader
+        num_epochs: Maximum number of epochs to train for
+        device: Device to train on ('cpu' or 'cuda')
+        unfreeze_epoch: Epoch to unfreeze backbone layers (for transfer learning)
+        early_stopping_patience: Number of epochs to wait before early stopping
+        lr: Learning rate
         
     Returns:
-        Trained model
+        The trained model (best performing model on validation set)
     """
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=2)
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import copy
+    import time
     
-    model = model.to(device)
-    best_val_acc = 0
-    patience_counter = 0
+    # Initialize loss function and optimizer
+    criterion = nn.CrossEntropyLoss()
+    
+    # Initially, only train the classifier head
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    # Enable training for classifier layers
+    for param in model.classifier.parameters():
+        param.requires_grad = True
+    
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    
+    # Training metrics
+    best_val_acc = 0.0
+    best_model_weights = copy.deepcopy(model.state_dict())
+    epochs_no_improve = 0
+    train_losses = []
+    val_losses = []
+    train_accs = []
+    val_accs = []
+    
+    # Start training
+    start_time = time.time()
     
     for epoch in range(num_epochs):
-        # Unfreeze backbone for fine-tuning after specified epoch
+        print(f"\nEpoch {epoch+1}/{num_epochs}")
+        print("-" * 10)
+        
+        # Unfreeze backbone after specified epoch
         if epoch == unfreeze_epoch:
-            model._unfreeze_backbone()
-            optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+            print("Unfreezing backbone layers...")
+            for param in model.parameters():
+                param.requires_grad = True
             
-        # Training
+            # Update optimizer to include all parameters
+            optimizer = optim.Adam(model.parameters(), lr=lr/10)
+            print(f"Adjusted learning rate to {lr/10}")
+        
+        # Training phase
         model.train()
-        train_loss = 0
-        correct = 0
-        total = 0
+        running_loss = 0.0
+        running_corrects = 0
         
         for batch in train_loader:
-            rgb = batch['rgb'].to(device)
+            inputs = batch['rgb'].to(device)
             labels = batch['label'].to(device)
             
+            # Zero the parameter gradients
             optimizer.zero_grad()
-            outputs = model(rgb)
+            
+            # Forward pass
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
             loss = criterion(outputs, labels)
+            
+            # Backward pass and optimize
             loss.backward()
             optimizer.step()
             
-            train_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-            
-        train_acc = 100 * correct / total
+            # Statistics
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == labels.data)
         
-        # Validation
+        epoch_loss = running_loss / len(train_loader.dataset)
+        epoch_acc = running_corrects.double() / len(train_loader.dataset)
+        
+        train_losses.append(epoch_loss)
+        train_accs.append(epoch_acc.item())
+        
+        print(f"Train Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
+        
+        # Validation phase
         model.eval()
-        val_loss = 0
-        correct = 0
-        total = 0
+        running_loss = 0.0
+        running_corrects = 0
         
         with torch.no_grad():
             for batch in val_loader:
-                rgb = batch['rgb'].to(device)
+                inputs = batch['rgb'].to(device)
                 labels = batch['label'].to(device)
                 
-                outputs = model(rgb)
+                # Forward pass
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
                 loss = criterion(outputs, labels)
                 
-                val_loss += loss.item()
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
-                
-        val_acc = 100 * correct / total
-        scheduler.step(val_loss)
+                # Statistics
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data)
         
-        print(f'Epoch {epoch+1}/{num_epochs}:')
-        print(f'Train Loss: {train_loss/len(train_loader):.3f}, '
-              f'Train Acc: {train_acc:.2f}%')
-        print(f'Val Loss: {val_loss/len(val_loader):.3f}, '
-              f'Val Acc: {val_acc:.2f}%')
+        epoch_loss = running_loss / len(val_loader.dataset)
+        epoch_acc = running_corrects.double() / len(val_loader.dataset)
         
-        # Save best model and check for early stopping
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            
-            # Save model with knot definition
-            if hasattr(model, 'knot_def') and model.knot_def is not None:
-                model.save_with_knot_def('best_model.pth')
-            else:
-                torch.save(model.state_dict(), 'best_model.pth')
-                
-            patience_counter = 0
+        val_losses.append(epoch_loss)
+        val_accs.append(epoch_acc.item())
+        
+        print(f"Val Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
+        
+        # Check if this is the best model so far
+        if epoch_acc > best_val_acc:
+            best_val_acc = epoch_acc
+            best_model_weights = copy.deepcopy(model.state_dict())
+            epochs_no_improve = 0
+            print(f"New best model with validation accuracy: {best_val_acc:.4f}")
         else:
-            patience_counter += 1
-            if patience_counter >= early_stopping_patience:
-                print(f'Early stopping after {epoch+1} epochs')
-                break
-            
+            epochs_no_improve += 1
+            print(f"No improvement for {epochs_no_improve} epochs")
+        
+        # Early stopping
+        if epochs_no_improve >= early_stopping_patience:
+            print(f"Early stopping triggered after {epoch+1} epochs")
+            break
+    
+    # Training complete
+    time_elapsed = time.time() - start_time
+    print(f"\nTraining complete in {time_elapsed//60:.0f}m {time_elapsed%60:.0f}s")
+    print(f"Best validation accuracy: {best_val_acc:.4f}")
+    
+    # Plot training history
+    plt.figure(figsize=(12, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.plot(train_losses, 'b-', label='Training Loss')
+    plt.plot(val_losses, 'r-', label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('Training and Validation Loss')
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(train_accs, 'b-', label='Training Accuracy')
+    plt.plot(val_accs, 'r-', label='Validation Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.title('Training and Validation Accuracy')
+    
+    plt.tight_layout()
+    plt.savefig('training_history.png')
+    print("Training history plot saved to training_history.png")
+    
+    # Load best model weights
+    model.load_state_dict(best_model_weights)
+    
     return model
 
 # Simple test script

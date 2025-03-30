@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from typing import Optional, Dict, List, Union
 
 from knots.knot_definition import KnotDefinition, KnotStage
-from generic_camera import GenericCamera, Frame
-from visualization import FrameVisualizer, VisualizationConfig
+from knots.utils.generic_camera import GenericCamera, Frame
+from knots.utils.visualization import FrameVisualizer, VisualizationConfig
 
 @dataclass
 class KnotSample:
@@ -53,9 +53,12 @@ class KnotDataCollector:
             # Use default overhand knot definition for backward compatibility
             self.knot_def = self._create_default_knot_def()
         
-        # Setup base path
+        # Setup base path with the new structure
         if base_path is None:
-            base_path = f"{self.knot_def.name}_dataset"
+            # Ensure data directory exists
+            data_dir = Path("data")
+            data_dir.mkdir(exist_ok=True)
+            base_path = f"data/{self.knot_def.name}_dataset"
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
         

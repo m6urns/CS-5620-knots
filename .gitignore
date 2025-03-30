@@ -1,3 +1,5 @@
 __pycache__
-models/
-knots.egg-info/
+# models/
+.pytest_cache
+*.egg-info
+*.egg

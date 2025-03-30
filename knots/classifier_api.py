@@ -18,8 +18,8 @@ from pathlib import Path
 
 from knots.knot_classifier import KnotClassifier
 from knots.knot_definition import KnotDefinition
-from generic_camera import GenericCamera
-from visualization import VisualizationConfig
+from knots.utils.generic_camera import GenericCamera
+from knots.utils.visualization import VisualizationConfig
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
