@@ -1,6 +1,6 @@
 {
-  "loose": 15,
-  "loop": 15,
-  "complete": 15,
-  "tightened": 15
+  "loose": 50,
+  "cross": 50,
+  "pass_under": 50,
+  "complete": 50
 }

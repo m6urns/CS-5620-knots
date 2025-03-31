@@ -33,7 +33,7 @@ class KnotClassifier(nn.Module):
         self.knot_def = knot_def
         
         # RGB backbone - Using EfficientNet-B0 for good performance/size trade-off
-        self.backbone = models.efficientnet_b0(weights=weights)
+        self.backbone = models.efficientnet_b2(weights=weights)
         
         # Get feature dimensions - fix for different PyTorch versions
         if hasattr(self.backbone, 'classifier') and isinstance(self.backbone.classifier, nn.Sequential):

@@ -1,6 +1,6 @@
 {
   "name": "overhand_knot",
-  "description": "A basic overhand knot with four stages",
+  "description": "https://www.animatedknots.com/half-knot",
   "stages": [
     {
       "id": "loose",
@@ -8,18 +8,18 @@
       "description": "Starting position with loose rope"
     },
     {
-      "id": "loop",
-      "name": "Loop Created",
-      "description": "A loop has been formed but not pulled through"
+      "id": "cross",
+      "name": "Cross the strands",
+      "description": "Cross the left strand over the right"
+    },
+    {
+      "id": "pass_under",
+      "name": "Pass Under",
+      "description": "Pass the left strand under the right"
     },
     {
       "id": "complete",
-      "name": "Knot Completed",
-      "description": "Basic knot structure is complete but not tightened"
-    },
-    {
-      "id": "tightened",
-      "name": "Knot Tightened",
+      "name": "Pull tight",
       "description": "The knot has been tightened and is secure"
     }
   ]

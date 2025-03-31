@@ -33,8 +33,9 @@ def main():
     cmd = [
         "python", "-m", "knots.classifier_api",
         "--model-path", model_path,
+        "--camera-index", "2",
         "--knot-def-path", knot_def_path,
-        "--confidence-threshold", "0.6",
+        "--confidence-threshold", "0.4",
         "--port", "8000"
     ]
     

@@ -16,7 +16,7 @@ def main():
     # Initialize collector with the overhand knot definition
     collector = KnotDataCollector(
         knot_def_path="knot_definitions/overhand_knot.knot",
-        camera_index=0,  # Use the default camera
+        camera_index=2,  # Use the default camera
         base_path=f"data/{knot_name}",
         resolution=(640, 480),
         fps=30

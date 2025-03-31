@@ -1,0 +1,10 @@
+{
+  "knot_type": "overhand_knot",
+  "stage": "error",
+  "stage_name": "Error state",
+  "stage_description": "Error state, unknown state",
+  "capture_timestamp": "2025-03-31T12:15:12.066508",
+  "notes": null,
+  "frame_number": 6857,
+  "resolution": "640x480"
+}
