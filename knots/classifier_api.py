@@ -93,6 +93,9 @@ class KnotClassifierAPI:
         self.is_running = False
         self.frame_queue = queue.Queue(maxsize=2)
         
+        # Add a lock for thread-safe model swapping
+        self.model_lock = threading.Lock()
+        
         # Initialize transforms
         self.rgb_transform = transforms.Compose([
             transforms.ToPILImage(),
@@ -194,6 +197,89 @@ class KnotClassifierAPI:
         self.processing_thread = threading.Thread(target=self.process_frames)
         self.is_running = True
         self.processing_thread.start()
+    
+    def reload_model(self) -> Dict[str, str]:
+        """Reload the model with current settings
+        
+        Returns:
+            Dict with status information
+        """
+        logger.info("Reloading model from settings...")
+        
+        # Initialize knot definition and classifier
+        new_knot_def = None
+        new_classifier = None
+        
+        try:
+            # Try to load model with knot definition
+            weights_path = Path(self.settings.model_path)
+            if not weights_path.exists():
+                return {"status": "error", "message": f"Model weights not found at {self.settings.model_path}"}
+            
+            # First try loading as a model that includes knot definition
+            try:
+                logger.info("Trying to load model with embedded knot definition...")
+                new_classifier = KnotClassifier.load_with_knot_def(
+                    self.settings.model_path, self.device)
+                new_knot_def = new_classifier.knot_def
+                
+                if new_knot_def:
+                    logger.info(f"Loaded knot definition from model: {new_knot_def.name}")
+                    logger.info(f"Stages: {new_knot_def.stage_ids}")
+                    new_stages = new_knot_def.stage_ids
+                else:
+                    raise ValueError("Model loaded but no knot definition found")
+                    
+            except Exception as e:
+                logger.warning(f"Could not load model with knot definition: {str(e)}")
+                
+                # If separate knot definition provided, try loading it
+                if self.settings.knot_def_path:
+                    try:
+                        knot_def_path = Path(self.settings.knot_def_path)
+                        if not knot_def_path.exists():
+                            return {"status": "error", "message": f"Knot definition not found at {self.settings.knot_def_path}"}
+                            
+                        logger.info(f"Loading knot definition from {self.settings.knot_def_path}")
+                        new_knot_def = KnotDefinition.from_file(self.settings.knot_def_path)
+                        new_stages = new_knot_def.stage_ids
+                        logger.info(f"Loaded knot definition: {new_knot_def.name}")
+                        logger.info(f"Stages: {new_stages}")
+                    except Exception as e:
+                        logger.error(f"Error loading knot definition: {str(e)}")
+                        # Fall back to default stages
+                        new_stages = ["loose", "loop", "complete", "tightened"]
+                        logger.info(f"Using default stages: {new_stages}")
+                else:
+                    # No knot definition available, fall back to default stages
+                    new_stages = ["loose", "loop", "complete", "tightened"]
+                    logger.info(f"Using default stages: {new_stages}")
+                
+                # Initialize model with number of classes based on stages
+                logger.info(f"Initializing model with {len(new_stages)} classes")
+                new_classifier = KnotClassifier(num_classes=len(new_stages))
+                
+                # Load model weights
+                logger.info("Loading model weights...")
+                new_classifier.load_state_dict(
+                    torch.load(self.settings.model_path, map_location=self.device))
+            
+            # Move model to device and set to eval mode
+            new_classifier.to(self.device)
+            new_classifier.eval()
+            logger.info("Model loaded successfully")
+            
+            # Now update the model and related attributes atomically with a lock
+            with self.model_lock:
+                self.knot_def = new_knot_def
+                self.stages = new_stages if 'new_stages' in locals() else new_knot_def.stage_ids
+                self.classifier = new_classifier
+            
+            return {"status": "success", "message": "Model reloaded successfully"}
+            
+        except Exception as e:
+            logger.error(f"Error reloading model: {str(e)}")
+            return {"status": "error", "message": f"Error reloading model: {str(e)}"}
         
     def preprocess_frame(self, frame_data):
         """Preprocess frame for model input"""
@@ -231,16 +317,21 @@ class KnotClassifierAPI:
                         rgb_tensor = self.preprocess_frame(frame.data)
                         self.last_rgb_tensor = rgb_tensor
                         
-                        outputs = self.classifier(rgb_tensor)
-                        probabilities = torch.nn.functional.softmax(outputs, dim=1)
-                        confidence, predicted = torch.max(probabilities, 1)
-                        confidence = confidence.item()
-                        predicted_idx = predicted.item()
+                        # Use the lock when accessing the model
+                        with self.model_lock:
+                            outputs = self.classifier(rgb_tensor)
+                            probabilities = torch.nn.functional.softmax(outputs, dim=1)
+                            confidence, predicted = torch.max(probabilities, 1)
+                            confidence = confidence.item()
+                            predicted_idx = predicted.item()
+                            
+                            # Get stages within the lock
+                            stages = self.stages.copy()  # Make a copy to avoid potential issues
                         
                         if confidence >= self.settings.confidence_threshold:
                             # Check if we're within range of valid stages
-                            if predicted_idx < len(self.stages):
-                                predicted_stage = self.stages[predicted_idx]
+                            if predicted_idx < len(stages):
+                                predicted_stage = stages[predicted_idx]
                             else:
                                 logger.warning(f"Predicted index {predicted_idx} out of range for stages")
                                 predicted_stage = "unknown"
@@ -249,10 +340,13 @@ class KnotClassifierAPI:
                     
                     # Get stage name if knot definition is available
                     stage_name = predicted_stage
-                    if self.knot_def and predicted_stage != "unknown":
+                    if predicted_stage != "unknown":
                         try:
-                            stage_obj = self.knot_def.get_stage(predicted_stage)
-                            stage_name = stage_obj.name
+                            # Use the lock when accessing the knot_def
+                            with self.model_lock:
+                                if self.knot_def:
+                                    stage_obj = self.knot_def.get_stage(predicted_stage)
+                                    stage_name = stage_obj.name
                         except ValueError:
                             pass
                     
@@ -321,27 +415,33 @@ class KnotClassifierAPI:
         """Get latest classification with detailed probabilities"""
         with torch.no_grad():
             if hasattr(self, 'last_rgb_tensor'):
-                outputs = self.classifier(self.last_rgb_tensor)
-                probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
-                all_probs = {stage: float(prob) for stage, prob in zip(self.stages, probabilities)}
+                # Use the lock when accessing the model
+                with self.model_lock:
+                    outputs = self.classifier(self.last_rgb_tensor)
+                    probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
+                    stages = self.stages.copy()
+                    all_probs = {stage: float(prob) for stage, prob in zip(stages, probabilities)}
             else:
-                all_probs = {stage: 0.0 for stage in self.stages}
+                with self.model_lock:
+                    stages = self.stages.copy()
+                all_probs = {stage: 0.0 for stage in stages}
         
         # Get stage descriptions if knot definition is available
         stage_info = {}
-        if self.knot_def:
-            for stage_id in self.stages:
-                try:
-                    stage = self.knot_def.get_stage(stage_id)
-                    stage_info[stage_id] = {
-                        "name": stage.name,
-                        "description": stage.description
-                    }
-                except ValueError:
-                    stage_info[stage_id] = {
-                        "name": stage_id,
-                        "description": ""
-                    }
+        with self.model_lock:
+            if self.knot_def:
+                for stage_id in stages:
+                    try:
+                        stage = self.knot_def.get_stage(stage_id)
+                        stage_info[stage_id] = {
+                            "name": stage.name,
+                            "description": stage.description
+                        }
+                    except ValueError:
+                        stage_info[stage_id] = {
+                            "name": stage_id,
+                            "description": ""
+                        }
         
         result = {
             "stage": self.latest_classification["stage"],
@@ -397,7 +497,12 @@ class KnotClassifierAPI:
         if camera_changed:
             return {"status": "restart_required", "message": "Camera settings change requires restart"}
         elif model_changed:
-            return {"status": "restart_required", "message": "Model or knot definition change requires restart"}
+            # Try to reload the model
+            result = self.reload_model()
+            if result["status"] == "success":
+                return {"status": "success", "message": "Model updated successfully"}
+            else:
+                return result
         return {"status": "success"}
     
     def cleanup(self):
@@ -551,6 +656,19 @@ async def update_settings(settings: Settings):
     """
     result = classifier_api.update_settings(settings)
     return result
+
+@app.post("/reload_model")
+async def reload_model():
+    """
+    Reload the model with current settings.
+    
+    This endpoint allows you to reload the model from the current
+    paths in settings without changing any settings.
+    
+    Returns:
+        dict: Status of reload operation
+    """
+    return classifier_api.reload_model()
 
 def main():
     """Main entry point with command line arguments"""

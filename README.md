@@ -300,6 +300,55 @@ API Endpoints:
 - `GET /stream`: Live video stream with classification overlay
 - `GET /settings`: Current settings
 - `POST /settings`: Update settings
+- `POST /reload_model`: Reload the model using current settings (for hot-swapping)
+
+#### Model Hot-Swapping
+
+The system now supports hot-swapping models without restarting the server. This allows you to:
+
+- Change models dynamically during operation
+- Test different model versions in real-time
+- Update models without service interruption
+
+There are two ways to swap models:
+
+1. **Via the settings endpoint**:
+   ```python
+   import requests
+   
+   # Change model path
+   settings = {
+       "model_path": "models/overhand_knot/new_model.pth",
+       "knot_def_path": "knot_definitions/overhand_knot.knot"  # Optional
+   }
+   response = requests.post("http://localhost:8000/settings", json=settings)
+   print(response.json())
+   ```
+
+2. **Via the reload endpoint** (when you've manually replaced model files):
+   ```python
+   import requests
+   
+   # Reload current model
+   response = requests.post("http://localhost:8000/reload_model")
+   print(response.json())
+   ```
+
+Using curl:
+```bash
+# Method 1: Update settings with new model path
+curl -X POST "http://localhost:8000/settings" \
+     -H "Content-Type: application/json" \
+     -d '{"model_path": "models/overhand_knot/new_model.pth"}'
+
+# Method 2: Reload current model
+curl -X POST "http://localhost:8000/reload_model"
+```
+
+**Notes:**
+- Camera settings changes still require a server restart
+- Model hot-swapping uses thread-safe mechanisms to ensure consistent operation
+- If a model fails to load, the system continues using the previous model
 
 Example API usage:
 ```python
@@ -317,6 +366,13 @@ print(json.dumps(response.json(), indent=2))
 # Update settings
 new_settings = {
     "confidence_threshold": 0.7
+}
+response = requests.post("http://localhost:8000/settings", json=new_settings)
+print(json.dumps(response.json(), indent=2))
+
+# Hot-swap to a new model
+new_settings = {
+    "model_path": "models/overhand_knot/improved_model.pth"
 }
 response = requests.post("http://localhost:8000/settings", json=new_settings)
 print(json.dumps(response.json(), indent=2))
