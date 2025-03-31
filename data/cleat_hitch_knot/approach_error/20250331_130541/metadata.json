@@ -1,0 +1,10 @@
+{
+  "knot_type": "cleat_hitch",
+  "stage": "approach_error",
+  "stage_name": "Approach Error",
+  "stage_description": "Over the cleat not under",
+  "capture_timestamp": "2025-03-31T13:05:41.994103",
+  "notes": null,
+  "frame_number": 4700,
+  "resolution": "640x480"
+}
