@@ -150,16 +150,24 @@ class KnotDataset(Dataset):
         self.samples = self._load_samples()
     
     def _default_transform(self):
-        """Default RGB data transformations"""
+        """Default RGB data transformations - based on transforms from https://github.com/joecameron1/individualproject"""
         return transforms.Compose([
             transforms.ToPILImage(),
             transforms.Resize((224, 224)),
+            transforms.RandomRotation(360),
+            transforms.RandomVerticalFlip(),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(10),
+            transforms.RandomAffine(
+                degrees=0,  # No additional rotation here since we have RandomRotation
+                translate=(0.2, 0.2),  # Width/height shift
+                shear=20,  # Shear transformation
+                scale=(0.7, 1.3),  # Zoom range equivalent to zoom_range=0.3
+            ),
+            # Keep color jittering
             transforms.ColorJitter(brightness=0.2, contrast=0.2),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                              std=[0.229, 0.224, 0.225])
+                            std=[0.229, 0.224, 0.225])
         ])
     
     def _load_samples(self):

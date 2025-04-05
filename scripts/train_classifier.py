@@ -36,11 +36,13 @@ def parse_args():
                       help='Patience for early stopping (default: 5)')
     parser.add_argument('--no-cuda', action='store_true',
                       help='Disable CUDA even if available')
+    parser.add_argument('--learning-rate', type=float, default=0.0001,
+                  help='Learning rate for training (default: 0.0001)')
     
     # Output arguments
     parser.add_argument('--output-dir', type=str, default="models",
                       help='Directory to save model and results (default: models)')
-    
+
     return parser.parse_args()
 
 def load_knot_definition(knot_def_path, data_path):
@@ -222,7 +224,8 @@ def main():
         num_epochs=args.epochs,
         device=device,
         unfreeze_epoch=args.unfreeze_epoch,
-        early_stopping_patience=args.early_stopping
+        early_stopping_patience=args.early_stopping,
+        lr=args.learning_rate
     )
     
     # Save the best model directly to the knot-specific output directory
