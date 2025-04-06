@@ -302,6 +302,47 @@ API Endpoints:
 - `POST /settings`: Update settings
 - `POST /reload_model`: Reload the model using current settings (for hot-swapping)
 
+#### Sequential Bias for Stage Prediction
+
+The system now implements a sequential bias feature to improve prediction accuracy across consecutive frames:
+
+- **Based on Natural Progression**: Applies bias based on natural progression through knot tying stages
+- **Reduces Random Flickering**: Avoids rapid classification changes between unrelated stages
+- **Configurable Strength**: Adjust bias intensity to match different knots and environments
+- **Adjustable Decay**: Control how quickly bias diminishes for non-adjacent stages
+
+Enable and configure sequential bias through command-line arguments or API settings:
+
+```bash
+# Enable sequential bias with custom settings
+python -m scripts.run_overhand_classifier --sequential-bias --bias-strength 2.0 --bias-decay 0.3
+```
+
+Or via the API:
+```python
+import requests
+
+# Enable and configure sequential bias
+settings = {
+    "sequential_bias": True,
+    "bias_strength": 1.5,
+    "bias_decay": 0.4
+}
+response = requests.post("http://localhost:8000/settings", json=settings)
+print(response.json())
+```
+
+The sequential bias information is included in classification results:
+```json
+{
+  "sequential_bias": {
+    "enabled": true,
+    "strength": 1.5,
+    "decay": 0.4
+  }
+}
+```
+
 #### Model Hot-Swapping
 
 The system now supports hot-swapping models without restarting the server. This allows you to:

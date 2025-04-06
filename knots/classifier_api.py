@@ -346,6 +346,11 @@ class KnotClassifierAPI:
                         
                         # Use the lock when accessing the model
                         with self.model_lock:
+                            # Update classifier's sequential bias settings from current settings
+                            self.classifier.sequential_bias = self.settings.sequential_bias
+                            self.classifier.bias_strength = self.settings.bias_strength
+                            self.classifier.bias_decay = self.settings.bias_decay
+                            
                             # Get the current stage if we have one from previous classification
                             current_stage_id = None
                             if (hasattr(self, 'latest_classification') and 
@@ -460,6 +465,11 @@ class KnotClassifierAPI:
             if hasattr(self, 'last_rgb_tensor'):
                 # Use the lock when accessing the model
                 with self.model_lock:
+                    # Ensure classifier settings match current settings
+                    self.classifier.sequential_bias = self.settings.sequential_bias
+                    self.classifier.bias_strength = self.settings.bias_strength
+                    self.classifier.bias_decay = self.settings.bias_decay
+                    
                     outputs = self.classifier(self.last_rgb_tensor)
                     probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
                     stages = self.stages.copy()
@@ -493,14 +503,12 @@ class KnotClassifierAPI:
             "probabilities": all_probs
         }
         
-        # Add sequential bias information
-        with self.model_lock:
-            sequential_bias_info = {
-                "enabled": self.classifier.sequential_bias,
-                "strength": self.classifier.bias_strength,
-                "decay": self.classifier.bias_decay
-            }
-        result["sequential_bias"] = sequential_bias_info
+        # Add sequential bias information - use settings values, not classifier's
+        result["sequential_bias"] = {
+            "enabled": self.settings.sequential_bias,
+            "strength": self.settings.bias_strength,
+            "decay": self.settings.bias_decay
+        }
         
         # Add stage info if available
         if stage_info:
@@ -542,9 +550,25 @@ class KnotClassifierAPI:
             self.settings.knot_def_path != new_settings.knot_def_path
         )
         
+        # Check if sequential bias settings changed
+        sequential_bias_changed = (
+            self.settings.sequential_bias != new_settings.sequential_bias or
+            self.settings.bias_strength != new_settings.bias_strength or
+            self.settings.bias_decay != new_settings.bias_decay
+        )
+        
         # Update settings
         self.settings = new_settings
         
+        # If sequential bias settings changed, update the classifier
+        if sequential_bias_changed:
+            with self.model_lock:
+                self.classifier.sequential_bias = self.settings.sequential_bias
+                self.classifier.bias_strength = self.settings.bias_strength
+                self.classifier.bias_decay = self.settings.bias_decay
+                logger.info(f"Updated sequential bias settings: enabled={self.settings.sequential_bias}, "
+                           f"strength={self.settings.bias_strength}, decay={self.settings.bias_decay}")
+            
         # Return appropriate status
         if camera_changed:
             return {"status": "restart_required", "message": "Camera settings change requires restart"}
@@ -555,6 +579,8 @@ class KnotClassifierAPI:
                 return {"status": "success", "message": "Model updated successfully"}
             else:
                 return result
+        elif sequential_bias_changed:
+            return {"status": "success", "message": "Sequential bias settings updated successfully"}
         return {"status": "success"}
     
     def cleanup(self):
