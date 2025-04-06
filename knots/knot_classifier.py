@@ -461,11 +461,33 @@ def main():
     # Setup dataset
     dataset = KnotDataset(args.data_path, knot_def=knot_def)
     
-    # Split dataset
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, [train_size, val_size])
+    # Class-balanced train/validation split
+    from torch.utils.data import Subset
+    from sklearn.model_selection import train_test_split
+    
+    # Get indices for each class
+    class_indices = {}
+    for idx, sample in enumerate(dataset.samples):
+        label = sample['label']
+        if label not in class_indices:
+            class_indices[label] = []
+        class_indices[label].append(idx)
+    
+    # Split each class with the same ratio
+    train_indices = []
+    val_indices = []
+    for label, indices in class_indices.items():
+        train_idx, val_idx = train_test_split(
+            indices, 
+            test_size=0.2,  # 80/20 split
+            random_state=42  # For reproducibility
+        )
+        train_indices.extend(train_idx)
+        val_indices.extend(val_idx)
+    
+    # Create train and validation datasets
+    train_dataset = Subset(dataset, train_indices)
+    val_dataset = Subset(dataset, val_indices)
     
     # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
