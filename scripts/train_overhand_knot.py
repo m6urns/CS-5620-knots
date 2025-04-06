@@ -30,9 +30,11 @@ def main():
     # Configure training parameters
     batch_size = 4
     val_split = 0.3
-    epochs = 50
-    unfreeze_epoch = 20
-    early_stopping = 10
+    # epochs = 50
+    # unfreeze_epoch = 20
+    epochs = 75
+    unfreeze_epoch = 25
+    early_stopping = 15
     learning_rate = 0.0001
     
     # Define knot-specific output directory

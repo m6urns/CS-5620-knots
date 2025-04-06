@@ -35,7 +35,7 @@ def main():
         "--model-path", model_path,
         "--camera-index", "2",
         "--knot-def-path", knot_def_path,
-        "--confidence-threshold", "0.5",
+        "--confidence-threshold", "0.3",
         "--port", "8000"
     ]
     
