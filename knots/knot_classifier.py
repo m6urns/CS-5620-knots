@@ -15,13 +15,19 @@ class KnotClassifier(nn.Module):
     """RGB-only classifier for knot stages"""
     
     def __init__(self, num_classes: int = 4, weights: str = 'DEFAULT', 
-                 knot_def: Optional[KnotDefinition] = None):
+                 knot_def: Optional[KnotDefinition] = None,
+                 sequential_bias: bool = False,
+                 bias_strength: float = 1.0,
+                 bias_decay: float = 0.5):
         """Initialize RGB-only classifier
         
         Args:
             num_classes: Number of knot stages to classify (ignored if knot_def is provided)
             weights: Pretrained weights option for backbone ('DEFAULT', None, etc.)
             knot_def: Optional knot definition to use for setting up the classifier
+            sequential_bias: Whether to apply sequential bias in predictions
+            bias_strength: The strength of the sequential bias effect (higher values = stronger effect)
+            bias_decay: How quickly the bias decreases for distant states (lower values = quicker decay)
         """
         # If knot_def is provided, get the number of classes from it
         if knot_def is not None:
@@ -31,6 +37,11 @@ class KnotClassifier(nn.Module):
         
         # Store knot definition if provided
         self.knot_def = knot_def
+        
+        # Store sequential bias settings
+        self.sequential_bias = sequential_bias
+        self.bias_strength = bias_strength
+        self.bias_decay = bias_decay
         
         # RGB backbone - Using EfficientNet-B0 for good performance/size trade-off
         self.backbone = models.efficientnet_b2(weights=weights)
@@ -70,17 +81,75 @@ class KnotClassifier(nn.Module):
         for param in self.backbone.parameters():
             param.requires_grad = True
     
-    def forward(self, rgb: torch.Tensor) -> torch.Tensor:
+    def forward(self, rgb: torch.Tensor, current_stage: Optional[int] = None) -> torch.Tensor:
         """Forward pass using only RGB input
         
         Args:
             rgb: RGB tensor of shape [batch_size, 3, H, W]
+            current_stage: Optional index of the current knot stage (for sequential bias)
             
         Returns:
             Tensor of logits for each class
         """
         features = self.backbone(rgb)
-        return self.classifier(features)
+        logits = self.classifier(features)
+        
+        # Apply sequential bias if enabled and current_stage is provided
+        if self.sequential_bias and current_stage is not None and self.knot_def is not None:
+            # Only apply bias when we have a knot definition and sequential bias is enabled
+            num_stages = self.knot_def.stage_count
+            device = logits.device
+            
+            # For each sample in the batch
+            for i in range(logits.shape[0]):
+                # Create bias weights based on distance from current stage
+                bias = torch.zeros(num_stages, device=device)
+                
+                for stage_idx in range(num_stages):
+                    # Calculate distance between stages in the sequence
+                    distance = abs(stage_idx - current_stage)
+                    
+                    # Apply bias based on distance
+                    # Bias is strongest for the next stage, and decays for distant stages
+                    if stage_idx == current_stage + 1:  # Next stage gets highest bias
+                        bias[stage_idx] = self.bias_strength
+                    elif stage_idx > current_stage:  # Future stages
+                        bias[stage_idx] = self.bias_strength * (self.bias_decay ** (distance - 1))
+                    elif stage_idx < current_stage:  # Previous stages
+                        bias[stage_idx] = -self.bias_strength * (self.bias_decay ** distance)
+                
+                # Apply the bias to the logits
+                logits[i] = logits[i] + bias
+        
+        return logits
+        
+    def predict_with_sequential_bias(self, rgb: torch.Tensor, current_stage_id: Optional[str] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Make a prediction with sequential bias based on current stage
+        
+        Args:
+            rgb: RGB tensor of shape [batch_size, 3, H, W]
+            current_stage_id: Current stage ID (if None, sequential bias won't be applied)
+            
+        Returns:
+            Tuple of (probabilities, predicted class indices)
+        """
+        current_stage_idx = None
+        
+        # If current stage is provided and sequential bias is enabled, get the stage index
+        if current_stage_id is not None and self.sequential_bias and self.knot_def is not None:
+            try:
+                current_stage_idx = self.knot_def.stage_index(current_stage_id)
+            except ValueError:
+                # If stage ID is not valid, don't apply bias
+                pass
+        
+        # Forward pass with or without sequential bias
+        with torch.no_grad():
+            outputs = self.forward(rgb, current_stage_idx)
+            probabilities = torch.nn.functional.softmax(outputs, dim=1)
+            _, predicted = torch.max(probabilities, 1)
+        
+        return probabilities, predicted
     
     @property
     def stage_ids(self) -> List[str]:
@@ -100,7 +169,10 @@ class KnotClassifier(nn.Module):
         # Save model state
         torch.save({
             'state_dict': self.state_dict(),
-            'knot_def': self.knot_def.to_dict() if self.knot_def else None
+            'knot_def': self.knot_def.to_dict() if self.knot_def else None,
+            'sequential_bias': self.sequential_bias,
+            'bias_strength': self.bias_strength,
+            'bias_decay': self.bias_decay
         }, path)
     
     @classmethod
@@ -125,8 +197,18 @@ class KnotClassifier(nn.Module):
         if saved_data.get('knot_def'):
             knot_def = KnotDefinition.from_dict(saved_data['knot_def'])
         
+        # Get sequential bias parameters if available
+        sequential_bias = saved_data.get('sequential_bias', False)
+        bias_strength = saved_data.get('bias_strength', 1.0)
+        bias_decay = saved_data.get('bias_decay', 0.5)
+        
         # Create model
-        model = cls(knot_def=knot_def)
+        model = cls(
+            knot_def=knot_def,
+            sequential_bias=sequential_bias,
+            bias_strength=bias_strength,
+            bias_decay=bias_decay
+        )
         model.load_state_dict(saved_data['state_dict'])
         model.to(device)
         

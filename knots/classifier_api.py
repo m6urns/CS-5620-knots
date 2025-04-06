@@ -65,6 +65,23 @@ class Settings(BaseModel):
         le=1.0
     )
     
+    # Sequential bias settings
+    sequential_bias: bool = Field(
+        default=False,
+        description="Whether to apply sequential bias in predictions"
+    )
+    bias_strength: float = Field(
+        default=1.0,
+        description="Strength of the sequential bias effect (higher = stronger)",
+        ge=0.0
+    )
+    bias_decay: float = Field(
+        default=0.5,
+        description="How quickly bias decreases for distant stages (lower = quicker)",
+        gt=0.0,
+        lt=1.0
+    )
+    
     # Server settings
     host: str = Field(
         default="0.0.0.0",
@@ -158,9 +175,14 @@ class KnotClassifierAPI:
                     self.stages = ["loose", "loop", "complete", "tightened"]
                     logger.info(f"Using default stages: {self.stages}")
                 
-                # Initialize model with number of classes based on stages
+                # Initialize model with number of classes based on stages and bias settings
                 logger.info(f"Initializing model with {len(self.stages)} classes")
-                self.classifier = KnotClassifier(num_classes=len(self.stages))
+                self.classifier = KnotClassifier(
+                    num_classes=len(self.stages),
+                    sequential_bias=self.settings.sequential_bias,
+                    bias_strength=self.settings.bias_strength,
+                    bias_decay=self.settings.bias_decay
+                )
                 
                 # Load model weights
                 logger.info("Loading model weights...")
@@ -255,9 +277,14 @@ class KnotClassifierAPI:
                     new_stages = ["loose", "loop", "complete", "tightened"]
                     logger.info(f"Using default stages: {new_stages}")
                 
-                # Initialize model with number of classes based on stages
+                # Initialize model with number of classes based on stages and bias settings
                 logger.info(f"Initializing model with {len(new_stages)} classes")
-                new_classifier = KnotClassifier(num_classes=len(new_stages))
+                new_classifier = KnotClassifier(
+                    num_classes=len(new_stages),
+                    sequential_bias=self.settings.sequential_bias,
+                    bias_strength=self.settings.bias_strength,
+                    bias_decay=self.settings.bias_decay
+                )
                 
                 # Load model weights
                 logger.info("Loading model weights...")
@@ -319,11 +346,27 @@ class KnotClassifierAPI:
                         
                         # Use the lock when accessing the model
                         with self.model_lock:
-                            outputs = self.classifier(rgb_tensor)
-                            probabilities = torch.nn.functional.softmax(outputs, dim=1)
-                            confidence, predicted = torch.max(probabilities, 1)
-                            confidence = confidence.item()
-                            predicted_idx = predicted.item()
+                            # Get the current stage if we have one from previous classification
+                            current_stage_id = None
+                            if (hasattr(self, 'latest_classification') and 
+                                'stage' in self.latest_classification and 
+                                self.latest_classification['stage'] != 'unknown' and
+                                self.classifier.sequential_bias):
+                                current_stage_id = self.latest_classification['stage']
+                                
+                            # Use sequential bias prediction if enabled
+                            if hasattr(self.classifier, 'predict_with_sequential_bias'):
+                                probabilities, predicted = self.classifier.predict_with_sequential_bias(
+                                    rgb_tensor, current_stage_id)
+                                confidence = probabilities[0, predicted[0]].item()
+                                predicted_idx = predicted.item()
+                            else:
+                                # Fall back to standard prediction
+                                outputs = self.classifier(rgb_tensor)
+                                probabilities = torch.nn.functional.softmax(outputs, dim=1)
+                                confidence, predicted = torch.max(probabilities, 1)
+                                confidence = confidence.item()
+                                predicted_idx = predicted.item()
                             
                             # Get stages within the lock
                             stages = self.stages.copy()  # Make a copy to avoid potential issues
@@ -450,6 +493,15 @@ class KnotClassifierAPI:
             "probabilities": all_probs
         }
         
+        # Add sequential bias information
+        with self.model_lock:
+            sequential_bias_info = {
+                "enabled": self.classifier.sequential_bias,
+                "strength": self.classifier.bias_strength,
+                "decay": self.classifier.bias_decay
+            }
+        result["sequential_bias"] = sequential_bias_info
+        
         # Add stage info if available
         if stage_info:
             result["stage_info"] = stage_info
@@ -535,6 +587,14 @@ def parse_args():
     parser.add_argument('--confidence-threshold', type=float, default=0.7,
                       help='Minimum confidence threshold for classifications (default: 0.7)')
     
+    # Sequential bias settings
+    parser.add_argument('--sequential-bias', action='store_true',
+                      help='Enable sequential bias in predictions')
+    parser.add_argument('--bias-strength', type=float, default=1.0,
+                      help='Strength of sequential bias effect (default: 1.0)')
+    parser.add_argument('--bias-decay', type=float, default=0.5,
+                      help='Decay rate for sequential bias effect (default: 0.5)')
+    
     # Server settings
     parser.add_argument('--host', type=str, default='0.0.0.0',
                       help='Host address to bind the server (default: 0.0.0.0)')
@@ -559,6 +619,9 @@ async def lifespan(app: FastAPI):
         model_path=args.model_path,
         knot_def_path=args.knot_def_path,
         confidence_threshold=args.confidence_threshold,
+        sequential_bias=args.sequential_bias,
+        bias_strength=args.bias_strength,
+        bias_decay=args.bias_decay,
         host=args.host,
         port=args.port
     )
