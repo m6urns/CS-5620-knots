@@ -96,30 +96,41 @@ class KnotClassifier(nn.Module):
         
         # Apply sequential bias if enabled and current_stage is provided
         if self.sequential_bias and current_stage is not None and self.knot_def is not None:
-            # Only apply bias when we have a knot definition and sequential bias is enabled
             num_stages = self.knot_def.stage_count
             device = logits.device
             
             # For each sample in the batch
             for i in range(logits.shape[0]):
-                # Create bias weights based on distance from current stage
+                # Create bias weights based on possible next stages
                 bias = torch.zeros(num_stages, device=device)
                 
-                for stage_idx in range(num_stages):
-                    # Calculate distance between stages in the sequence
-                    distance = abs(stage_idx - current_stage)
-                    
-                    # Apply bias based on distance
-                    # Bias is strongest for the next stage, and decays for distant stages
-                    if stage_idx == current_stage + 1:  # Next stage gets highest bias
-                        bias[stage_idx] = self.bias_strength
-                    elif stage_idx > current_stage:  # Future stages
-                        bias[stage_idx] = self.bias_strength * (self.bias_decay ** (distance - 1))
-                    elif stage_idx < current_stage:  # Previous stages
-                        bias[stage_idx] = -self.bias_strength * (self.bias_decay ** distance)
+                current_stage_obj = self.knot_def.get_stage_by_index(current_stage)
+                next_stage_ids = current_stage_obj.next_stages
                 
-                # Apply the bias to the logits
-                logits[i] = logits[i] + bias
+                # If no next stages defined, fall back to sequential behavior
+                if not next_stage_ids:
+                    if current_stage + 1 < num_stages:
+                        next_stage_ids = [self.knot_def.stage_ids[current_stage + 1]]
+                
+                # Apply bias to all possible next stages
+                for next_stage_id in next_stage_ids:
+                    try:
+                        next_stage_idx = self.knot_def.stage_index(next_stage_id)
+                        # Apply highest bias to all valid next stages
+                        bias[next_stage_idx] = self.bias_strength
+                    except ValueError:
+                        continue
+                
+                # Apply negative bias to non-adjacent stages
+                for stage_idx in range(num_stages):
+                    if bias[stage_idx] == 0:  # If not a next stage
+                        distance = abs(stage_idx - current_stage)
+                        if stage_idx < current_stage:  # Previous stages
+                            bias[stage_idx] = -self.bias_strength * (self.bias_decay ** distance)
+                        elif stage_idx > current_stage:  # Future stages (not direct next)
+                            bias[stage_idx] = -self.bias_strength * (self.bias_decay ** distance)
+                
+                logits[i] += bias
         
         return logits
         
