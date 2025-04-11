@@ -1,6 +1,15 @@
 {
-  "loose": 50,
-  "cross": 50,
-  "pass_under": 50,
-  "complete": 50
+  "loose": 100,
+  "cross": 100,
+  "pass_under": 100,
+  "complete": 105,
+  "start": 5,
+  "left_over_right": 5,
+  "tuck_under": 5,
+  "first_half_complete": 5,
+  "right_over_left": 5,
+  "second_tuck_under": 5,
+  "wrong_left_over_right": 6,
+  "wrong_tuck_under": 5,
+  "error_granny_knot": 5
 }

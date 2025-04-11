@@ -1,0 +1,10 @@
+{
+  "knot_type": "square_knot",
+  "stage": "right_over_left",
+  "stage_name": "Right Over Left",
+  "stage_description": "Take the right strand (which is now on the left) and cross it over the left strand",
+  "capture_timestamp": "2025-04-11T09:55:02.939376",
+  "notes": null,
+  "frame_number": 5336,
+  "resolution": "640x480"
+}
