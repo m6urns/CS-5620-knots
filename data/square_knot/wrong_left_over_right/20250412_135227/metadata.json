@@ -1,0 +1,10 @@
+{
+  "knot_type": "square_knot",
+  "stage": "wrong_left_over_right",
+  "stage_name": "Wrong: Left Over Right Again",
+  "stage_description": "ERROR: Taking the left strand over the right again (instead of right over left)",
+  "capture_timestamp": "2025-04-12T13:52:27.467165",
+  "notes": null,
+  "frame_number": 21471,
+  "resolution": "640x480"
+}

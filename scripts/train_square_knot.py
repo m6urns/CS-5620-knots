@@ -34,9 +34,9 @@ def main():
     # epochs = 50
     # unfreeze_epoch = 20
     epochs = 100
-    unfreeze_epoch = 15
+    unfreeze_epoch = 30
     early_stopping =25
-    learning_rate = 0.001
+    learning_rate = 0.0001
     
     # Define knot-specific output directory
     output_dir = os.path.join("models", knot_def.name)

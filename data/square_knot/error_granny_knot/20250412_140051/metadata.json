@@ -1,0 +1,10 @@
+{
+  "knot_type": "square_knot",
+  "stage": "error_granny_knot",
+  "stage_name": "Error: Granny Knot Formed",
+  "stage_description": "You've created a granny knot instead of a square knot. This knot is less secure and may slip under load.",
+  "capture_timestamp": "2025-04-12T14:00:51.905788",
+  "notes": null,
+  "frame_number": 34112,
+  "resolution": "640x480"
+}

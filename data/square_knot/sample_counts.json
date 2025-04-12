@@ -1,0 +1,12 @@
+{
+  "start": 100,
+  "left_over_right": 100,
+  "tuck_under": 100,
+  "first_half_complete": 100,
+  "right_over_left": 98,
+  "second_tuck_under": 100,
+  "wrong_left_over_right": 98,
+  "wrong_tuck_under": 98,
+  "error_granny_knot": 99,
+  "complete": 100
+}
