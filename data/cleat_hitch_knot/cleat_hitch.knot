@@ -1,0 +1,26 @@
+{
+  "name": "cleat_hitch",
+  "description": "A cleat hitch for securing a line to a dock cleat",
+  "stages": [
+    {
+      "id": "start",
+      "name": "Approach",
+      "description": "Hold the line and position yourself with the dock cleat in front of you",
+      "next_stages": [
+        "first_wrap"
+      ]
+    },
+    {
+      "id": "wrong_approach",
+      "name": "Wrong: Go over the cleat not under",
+      "description": "Over the cleat not under",
+      "next_stages": []
+    },
+    {
+      "id": "first_wrap",
+      "name": "First Wrap",
+      "description": "Wrap the line around the base of the cleat, making a full turn",
+      "next_stages": []
+    }
+  ]
+}

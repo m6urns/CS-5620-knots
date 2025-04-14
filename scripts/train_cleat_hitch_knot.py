@@ -28,11 +28,12 @@ def main():
         sys.exit(1)
     
     # Configure training parameters
-    batch_size = 4
+    batch_size = 32
     val_split = 0.2
-    epochs = 30
-    unfreeze_epoch = 10
-    early_stopping = 5
+    epochs = 100
+    unfreeze_epoch = 30
+    early_stopping = 25
+    learning_rate = 0.0001
     
     # Define knot-specific output directory
     output_dir = os.path.join("models", knot_def.name)
@@ -60,7 +61,8 @@ def main():
         num_epochs=epochs,
         device=device,
         unfreeze_epoch=unfreeze_epoch,
-        early_stopping_patience=early_stopping
+        early_stopping_patience=early_stopping,
+        lr=learning_rate
     )
     
     # Save the trained model directly to the knot-specific output directory
