@@ -49,8 +49,8 @@ class FrameVisualizer:
             ])
         
         info.extend([
-            "'s': Save frame",
-            "'q': Quit"
+            # "'s': Save frame",
+            # "'q': Quit"
         ])
             
         return info
@@ -79,7 +79,8 @@ class FrameVisualizer:
         if self.config.show_info:
             display_frame = frame.copy()
             info_text = self._create_info_overlay(frame)
-            y = 30
+            # y = 30
+            y = 100
             for text in info_text:
                 cv2.putText(display_frame, text, (10, y), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
@@ -98,8 +99,9 @@ class FrameVisualizer:
     
     def _handle_key(self, key: int, frame: np.ndarray):
         """Handle keyboard input"""
-        if key == ord('s'):
-            self.save_frame(frame)
+        # if key == ord('s'):
+            # self.save_frame(frame)
+        pass
     
     def save_frame(self, frame: np.ndarray):
         """Save current frame to disk

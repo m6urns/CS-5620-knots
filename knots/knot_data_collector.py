@@ -241,7 +241,7 @@ class KnotDataCollector:
                         "Q: Quit"
                     ]
                     
-                    y_pos = 120
+                    y_pos = 175
                     for control in controls:
                         cv2.putText(display_frame, control,
                                   (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
