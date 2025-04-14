@@ -409,6 +409,9 @@ class KnotClassifierAPI:
                     # Add text overlays to display frame
                     confidence_color = (0, 255, 0) if confidence >= self.settings.confidence_threshold else (0, 165, 255)
                     display_name = stage_name if stage_name != predicted_stage else predicted_stage
+                    ########################################
+                    # Comment out here to remove overlays  #
+                    ########################################
                     cv2.putText(display_frame, f"Stage: {display_name}", 
                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                               confidence_color, 2)
