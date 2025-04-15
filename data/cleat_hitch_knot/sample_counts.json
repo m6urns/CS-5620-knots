@@ -1,5 +1,9 @@
 {
-  "start": 50,
-  "wrong_approach": 50,
-  "first_wrap": 50
+  "start": 100,
+  "wrong_approach": 100,
+  "first_wrap": 100,
+  "over_cleat_wrap": 100,
+  "over_right_spike_wrap": 100,
+  "over_left_spike_wrap": 100,
+  "complete": 100
 }

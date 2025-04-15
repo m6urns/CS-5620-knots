@@ -19,7 +19,39 @@
     {
       "id": "first_wrap",
       "name": "First Wrap",
-      "description": "Wrap the line around the base of the cleat, making a full turn",
+      "description": "Wrap the line around the base of the cleat making a full turn",
+      "next_stages": [
+        "over_cleat_wrap"
+      ]
+    },
+    {
+      "id": "over_cleat_wrap",
+      "name": "Over Cleat Wrap",
+      "description": "Wrap the leading strand over the cleat",
+      "next_stages": [
+        "over_right_spike_wrap"
+      ]
+    },
+    {
+      "id": "over_right_spike_wrap",
+      "name": "Over Right Spike Wrap",
+      "description": "Wrap the leading strand over the right spike of the cleat",
+      "next_stages": [
+        "over_left_spike_wrap"
+      ]
+    },
+    {
+      "id": "over_left_spike_wrap",
+      "name": "Over Left Spike Wrap",
+      "description": "Wrap the leading strand over the left side of the cleat",
+      "next_stages": [
+        "complete"
+      ]
+    },
+    {
+      "id": "complete",
+      "name": "Complete",
+      "description": "Pass the leading strand under the left spike wrap",
       "next_stages": []
     }
   ]
