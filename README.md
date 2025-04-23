@@ -2,6 +2,40 @@
 
 A real-time knot tying classification system using computer vision with OpenCV and PyTorch.
 
+## Quick Start
+
+1. Clone and initialize:
+   ```bash
+   git clone https://github.com/yourusername/knot-classification.git
+   cd knot-classification
+   git submodule update --init
+   ```
+
+2. Install Python dependencies:
+   ```bash
+   pip install -e .
+   ```
+
+3. Install UI dependencies:
+   ```bash
+   cd ui
+   npm install
+   cd ..
+   ```
+
+4. Run the backend (in one terminal):
+   ```bash
+   python scripts/run_square_classifier.py
+   ```
+   The backend API will be available at http://localhost:8000
+
+5. Run the UI (in another terminal):
+   ```bash
+   cd ui
+   npm run dev
+   ```
+   The UI will be available at http://localhost:3000
+
 ## Overview
 
 This system provides real-time classification of knot tying stages using RGB camera input and deep learning. It features a generic knot definition system that allows you to define and classify any type of knot with arbitrary stages. The system consists of several modular components:
@@ -23,6 +57,11 @@ knot-classifier/
 ├── setup.py                           # Package installation
 ├── requirements.txt                   # Dependencies
 │
+├── ui/                                # UI submodule (React application)
+│   ├── src/                           # Source code
+│   ├── public/                        # Static assets
+│   ├── package.json                   # Dependencies and scripts
+│   
 ├── knots/                             # Core package directory  
 │   ├── __init__.py                    
 │   ├── knot_definition.py             # Knot structure definitions
@@ -64,10 +103,11 @@ knot-classifier/
 
 ## Setup
 
-1. Clone this repository:
+1. Clone this repository and initialize submodules:
    ```
    git clone https://github.com/yourusername/knot-classification.git
    cd knot-classification
+   git submodule update --init
    ```
 
 2. Install the package in development mode:
@@ -75,11 +115,32 @@ knot-classifier/
    pip install -e .
    ```
 
-3. Check camera availability:
+3. Set up the UI:
+   ```
+   cd ui
+   npm install
+   npm run dev
+   ```
+   The UI will be available at http://localhost:3000
+
+4. Check camera availability:
    ```
    python -c "import cv2; print([i for i in range(10) if cv2.VideoCapture(i).isOpened()])"
    ```
    This will print available camera indices.
+
+## UI
+
+The project includes a modern web interface for interacting with the knot classification system. The UI is built with React and provides:
+
+- Real-time camera feed display
+- Knot stage visualization
+- Classification results
+- Interactive controls
+
+The UI runs on port 3000 by default. Make sure this port is available when starting the application.
+
+The backend API runs on port 8000 by default. The UI will automatically connect to this port for real-time classification and camera feed.
 
 ## Knot Definitions
 
@@ -421,42 +482,34 @@ print(json.dumps(response.json(), indent=2))
 
 ## Complete Examples
 
-### Overhand Knot Classification Pipeline
+### Square Knot Classification Pipeline
 
-1. Collect data:
+1. Start the backend API:
+   ```bash
+   python scripts/run_square_classifier.py
    ```
-   python -m scripts.collect_overhand_knot
-   ```
+   This will:
+   - Load the square knot model
+   - Start the classification API on port 8000
+   - Provide endpoints for classification and video stream
 
-2. Train model:
+2. Start the UI:
+   ```bash
+   cd ui
+   npm run dev
    ```
-   python -m scripts.train_overhand_knot
-   ```
+   This will:
+   - Start the React development server on port 3000
+   - Connect to the backend API on port 8000
+   - Display the real-time classification interface
 
-3. Start classification API:
-   ```
-   python -m scripts.run_overhand_classifier
-   ```
-
-4. View the results in a browser:
-   ```
-   http://localhost:8000/stream
-   ```
+3. Access the system:
+   - UI: http://localhost:3000
+   - API Documentation: http://localhost:8000/docs
+   - Video Stream: http://localhost:8000/stream
+   - Classification Data: http://localhost:8000/classification
 
 ## Testing
 
 Run the tests with pytest:
 ```
-pytest -xvs knots/tests/
-```
-
-## Extending the System
-
-To add a new knot type:
-
-1. Create a `.knot` definition file in the `knot_definitions` directory
-2. Collect data using the data collection scripts with your definition
-3. Train a model using the training scripts with your dataset
-4. Run the API with your model and definition
-
-The system is designed to be flexible and can accommodate any knot type with any number of stages.
